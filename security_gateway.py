@@ -39,8 +39,9 @@ class Authenticator:
         # STEP 1: Time Window Security Gate (Max 10-second request age rule)
         try:
             request_time = datetime.strptime(x_app_timestamp, "%Y-%m-%d %H:%M:%S")
-            server_current_time_utc = datetime.now(timezone.utc)
-            server_current_time_ist = server_current_time_utc + timedelta(hours=5, minutes=30)
+            aware_current_time_utc = datetime.now(timezone.utc)
+            aware_current_time_ist = aware_current_time_utc + timedelta(hours=5, minutes=30)
+            server_current_time_ist = aware_current_time_ist.replace(tzinfo=None)
             time_difference = abs((server_current_time_ist - request_time).total_seconds())
             print("Time Difference: ",time_difference)
             if time_difference > 30:
