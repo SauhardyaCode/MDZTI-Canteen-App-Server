@@ -70,6 +70,14 @@ def is_time_in_slot(check_time: str, time_slot: str) -> bool:
 
 ALLOWED_CONFIG_KEYS = {"breakfast_time_slot", "lunch_time_slot", "dinner_time_slot"} # more to be added later
 
+@app.get("/")
+def home_root():
+    return {"message": "The Canteen Backend is fully live and online!"}
+
+@app.get("/api/health")
+def health_check():
+    return {"status": "FastAPI is routing correctly under the /api prefix"}
+
 @app.post("/api/configure-settings")
 def configure_settings(key: str, value: str):
     if key not in ALLOWED_CONFIG_KEYS:
