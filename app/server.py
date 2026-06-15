@@ -1,10 +1,9 @@
-import sqlite3
+import psycopg2
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from dotenv import load_dotenv
-import os, re
+import os
 from password_hasher import PasswordHasher
 from security_gateway import Authenticator
 import random
@@ -25,7 +24,7 @@ app.add_middleware(
 )
 
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS physical_qr_tokens (
                         token_id TEXT PRIMARY KEY,
@@ -33,7 +32,7 @@ def init_db():
                    )''')
     
     cursor.execute('''CREATE TABLE IF NOT EXISTS trainee_assignments (
-                        assignment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        assignment_id SERIAL PRIMARY KEY,
                         token_id TEXT,
                         is_active INTEGER NOT NULL DEFAULT 1,
                         trainee_name TEXT,
@@ -46,7 +45,7 @@ def init_db():
                    )''')
     
     cursor.execute('''CREATE TABLE IF NOT EXISTS qr_scans (
-                        scan_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        scan_id BIGSERIAL PRIMARY KEY,
                         assignment_id INTEGER,
                         scan_date TEXT, --format(YYYY-MM-DD)
                         scan_time TEXT, --format(HH:MM:SS)
@@ -59,6 +58,7 @@ def init_db():
                    )''')
     
     conn.commit()
+    cursor.close()
     conn.close()
 
 init_db()
@@ -86,24 +86,31 @@ def configure_settings(key: str, value: str):
             detail=f"Modification of the configuration key '{key}' is restricted or invalid."
         )
         
-    conn = sqlite3.connect(DB_PATH)
+    conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
     
     try:
-        cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+        query = """
+                INSERT INTO settings (key, value)
+                VALUES (%s, %s)
+                ON CONFLICT
+                DO UPDATE SET value = EXCLUDED.value
+        """
+        cursor.execute(query, (key, value))
         conn.commit()
         return {
             "status": "success",
             "message": f"Configuration setting '{key}' successfully updated to '{value}'."
         }
     except Exception as e:
+        conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
 
 @app.post("/api/generate-new-token")
 def generate_new_token():
-    conn = sqlite3.connect(DB_PATH)
+    conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
 
     cursor.execute("SELECT token_id FROM physical_qr_tokens")
@@ -118,12 +125,13 @@ def generate_new_token():
             break
 
     try:
-        cursor.execute("INSERT INTO physical_qr_tokens (token_id) VALUES (?)", (token_id,))
+        cursor.execute("INSERT INTO physical_qr_tokens (token_id) VALUES (%s)", (token_id,))
         conn.commit()
         return {"status": "success", "token_id_no": generated_code, "final_token_id": token_id}
 
     # Check - Did the database refuse to insert the entry?
     except Exception as e:
+        conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
@@ -138,10 +146,10 @@ def assign_token_to_trainee(
     meal_preference: str,
     alloted_room_number: str = ""
 ):
-    conn = sqlite3.connect(DB_PATH)
+    conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
 
-    cursor.execute("SELECT card_status FROM physical_qr_tokens WHERE token_id = ?", (token_id,))
+    cursor.execute("SELECT card_status FROM physical_qr_tokens WHERE token_id = %s", (token_id,))
     res = cursor.fetchone()
 
     # Check - Is the QR token a valid one (available physically)?
@@ -154,11 +162,11 @@ def assign_token_to_trainee(
         conn.close()
         raise HTTPException(status_code=400, detail="The requested Physical QR is already assigned to a trainee!")
 
-    cursor.execute("UPDATE physical_qr_tokens SET card_status = 'ASSIGNED' WHERE token_id = ?", (token_id,))
+    cursor.execute("UPDATE physical_qr_tokens SET card_status = 'ASSIGNED' WHERE token_id = %s", (token_id,))
     try:
         cursor.execute('''INSERT INTO trainee_assignments (token_id, trainee_name, trainee_desg,
                        course_start_date, course_end_date, meal_preference, alloted_room_number)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)''', 
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)''', 
                        (token_id, trainee_name, trainee_desg, course_start,
                         course_end, meal_preference, alloted_room_number)
                     )
@@ -169,6 +177,7 @@ def assign_token_to_trainee(
     
     # Check - Did the database refuse to insert the entry?
     except Exception as e:
+        conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
@@ -183,10 +192,10 @@ def verify_and_supply_data(token_id: str):
     if not hasher.check_password(token_number, token_hash_code):
         raise HTTPException(status_code=404, detail="Invalid QR Code scanned!")
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT card_status FROM physical_qr_tokens WHERE token_id = ?", (token_id,))
+    cursor.execute("SELECT card_status FROM physical_qr_tokens WHERE token_id = %s", (token_id,))
     card_status = cursor.fetchone()
 
     # Check - Is the QR scanned a valid token?
@@ -197,7 +206,7 @@ def verify_and_supply_data(token_id: str):
     cursor.execute('''
                    SELECT assignment_id, trainee_name, trainee_desg, course_start_date, course_end_date, meal_preference, alloted_room_number
                    FROM trainee_assignments
-                   WHERE token_id = ? AND is_active = 1''', (token_id,))
+                   WHERE token_id = %s AND is_active = 1''', (token_id,))
     trainee_data = cursor.fetchone()
 
     # Check - Is the QR token assigned to a trainee?
@@ -228,7 +237,7 @@ def verify_and_supply_data(token_id: str):
 
     for slot_type, slot in time_slots:
         if is_time_in_slot(current_time, slot):
-            cursor.execute("SELECT scan_time FROM qr_scans WHERE assignment_id = ? AND scan_date = ?",
+            cursor.execute("SELECT scan_time FROM qr_scans WHERE assignment_id = %s AND scan_date = %s",
                            (assigment_id, current_date))
             scan_times_today = cursor.fetchall()
 
@@ -244,7 +253,7 @@ def verify_and_supply_data(token_id: str):
             try:  
                 cursor.execute(
                     '''INSERT INTO qr_scans (assignment_id, scan_date, scan_time)
-                    VALUES (?, ?, ?)''', (assigment_id, current_date, current_time)
+                    VALUES (%s, %s, %s)''', (assigment_id, current_date, current_time)
                 )
                 conn.commit()
                 return {"status": "success", "name": name, "desg": desg, "start_date": start_date,
@@ -252,6 +261,7 @@ def verify_and_supply_data(token_id: str):
             
             # Check - Did the database refuse to insert the entry?
             except Exception as e:
+                conn.rollback()
                 raise HTTPException(status_code=500, detail=str(e))
             finally:
                 conn.close()
