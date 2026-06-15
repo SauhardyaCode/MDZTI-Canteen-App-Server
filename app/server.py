@@ -28,7 +28,7 @@ def init_db():
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS physical_qr_tokens (
                         token_id TEXT PRIMARY KEY,
-                        card_status TEXT DEFAULT "AVAILABLE"
+                        card_status TEXT DEFAULT 'AVAILABLE'
                    )''')
     
     cursor.execute('''CREATE TABLE IF NOT EXISTS trainee_assignments (
@@ -40,7 +40,7 @@ def init_db():
                         course_start_date TEXT, --format(YYYY-MM-DD)
                         course_end_date TEXT, --format(YYYY-MM-DD)
                         meal_preference TEXT NOT NULL,
-                        alloted_room_number TEXT DEFAULT "",
+                        alloted_room_number TEXT DEFAULT '',
                         FOREIGN KEY (token_id) REFERENCES physical_qr_tokens (token_id)
                    )''')
     
