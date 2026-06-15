@@ -40,6 +40,7 @@ class Authenticator:
         try:
             request_time = datetime.strptime(x_app_timestamp, "%Y-%m-%d %H:%M:%S")
             time_difference = abs((datetime.now() - request_time).total_seconds())
+            print("Time Difference: ",time_difference)
             if time_difference > 10:
                 raise HTTPException(
                     status_code=401,
