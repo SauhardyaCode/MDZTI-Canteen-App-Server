@@ -1,4 +1,4 @@
-import sqlite3
+import psycopg2
 from datetime import datetime, timezone, timedelta
 from fastapi import Header, HTTPException
 from password_hasher import PasswordHasher
@@ -13,7 +13,7 @@ class Authenticator:
 
     def __init_security_db(self):
         """Ensures the temporary nonce tracking table is established with index optimization."""
-        conn = sqlite3.connect(self.__DB_PATH)
+        conn = psycopg2.connect(self.__DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS processed_header_signatures (
@@ -24,6 +24,7 @@ class Authenticator:
         # Index makes garbage collection lookups near-instantaneous 
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_received_at ON processed_header_signatures(received_at)")
         conn.commit()
+        cursor.close()
         conn.close()
 
 
@@ -56,15 +57,17 @@ class Authenticator:
             )
 
         # STEP 2: Connect to SQLite to clear garbage and check for double-spend attempts
-        conn = sqlite3.connect(self.__DB_PATH)
+        conn = psycopg2.connect(self.__DB_PATH)
         cursor = conn.cursor()
         
         try:
+            cutoff_time_ist = server_current_time_ist - timedelta(minutes=2)
+            cutoff_string = cutoff_time_ist.strftime("%Y-%m-%d %H:%M:%S")
             # Optimization: Wipe logs older than 2 minutes to keep table tiny and fast
-            cursor.execute("DELETE FROM processed_header_signatures WHERE received_at < datetime('now', '-2 minutes', 'localtime')")
+            cursor.execute("DELETE FROM processed_header_signatures WHERE received_at < %s", (cutoff_string,))
             
             # Verify if signature exists in the live active nonce pool
-            cursor.execute("SELECT 1 FROM processed_header_signatures WHERE signature = ?", (x_app_signature,))
+            cursor.execute("SELECT 1 FROM processed_header_signatures WHERE signature = %s", (x_app_signature,))
             if cursor.fetchone() is not None:
                 raise HTTPException(
                     status_code=401,
@@ -84,7 +87,7 @@ class Authenticator:
 
             # STEP 5: Commit signature to cache database registry to prevent multi-device execution loops
             cursor.execute(
-                "INSERT INTO processed_header_signatures (signature, received_at) VALUES (?, ?)",
+                "INSERT INTO processed_header_signatures (signature, received_at) VALUES (%s, %s)",
                 (x_app_signature, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             )
             conn.commit()
