@@ -1,6 +1,7 @@
 import sqlite3
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import os, re
@@ -15,6 +16,13 @@ hasher = PasswordHasher()
 authenticator = Authenticator(DB_PATH, SECRET_KEY)
 app = FastAPI(title="Hostel Canteen Central Node",
               dependencies=[Depends(authenticator.verify_frontend_app_authenticity)])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows requests from any client machine
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
