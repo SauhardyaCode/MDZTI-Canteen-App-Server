@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from fastapi import Header, HTTPException
 from password_hasher import PasswordHasher
 
@@ -39,9 +39,11 @@ class Authenticator:
         # STEP 1: Time Window Security Gate (Max 10-second request age rule)
         try:
             request_time = datetime.strptime(x_app_timestamp, "%Y-%m-%d %H:%M:%S")
-            time_difference = abs((datetime.now() - request_time).total_seconds())
+            server_current_time_utc = datetime.now(timezone.utc)
+            server_current_time_ist = server_current_time_utc + timedelta(hours=5, minutes=30)
+            time_difference = abs((server_current_time_ist - request_time).total_seconds())
             print("Time Difference: ",time_difference)
-            if time_difference > 10:
+            if time_difference > 30:
                 raise HTTPException(
                     status_code=401,
                     detail="Request authorization window has expired."
