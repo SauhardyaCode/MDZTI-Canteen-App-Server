@@ -27,6 +27,12 @@ class Authenticator:
         cursor.close()
         conn.close()
 
+    def __get_current_ist_datetime() -> datetime:
+        aware_current_time_utc = datetime.now(timezone.utc)
+        aware_current_time_ist = aware_current_time_utc + timedelta(hours=5, minutes=30)
+        current_time_ist = aware_current_time_ist.replace(tzinfo=None)
+        return current_time_ist
+
 
     def verify_frontend_app_authenticity(
         self,
@@ -40,9 +46,7 @@ class Authenticator:
         # STEP 1: Time Window Security Gate (Max 10-second request age rule)
         try:
             request_time = datetime.strptime(x_app_timestamp, "%Y-%m-%d %H:%M:%S")
-            aware_current_time_utc = datetime.now(timezone.utc)
-            aware_current_time_ist = aware_current_time_utc + timedelta(hours=5, minutes=30)
-            server_current_time_ist = aware_current_time_ist.replace(tzinfo=None)
+            server_current_time_ist = self.__get_current_ist_datetime()
             time_difference = abs((server_current_time_ist - request_time).total_seconds())
             print("Time Difference: ",time_difference)
             if time_difference > 30:
@@ -88,7 +92,7 @@ class Authenticator:
             # STEP 5: Commit signature to cache database registry to prevent multi-device execution loops
             cursor.execute(
                 "INSERT INTO processed_header_signatures (signature, received_at) VALUES (%s, %s)",
-                (x_app_signature, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                (x_app_signature, self.__get_current_ist_datetime().strftime("%Y-%m-%d %H:%M:%S"))
             )
             conn.commit()
             
