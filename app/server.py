@@ -196,7 +196,6 @@ def _verify_and_supply_data(
     # Check - Is it the correct time to scan the QR? (No meals right now)
     close_connection_raise_error(conn, cursor, 403, "Not a valid meal slot! Try again later!")
 
-
 @app.get("/")
 def home_root():
     return {"message": "The Canteen Backend is fully live and online!"}
@@ -353,7 +352,7 @@ def set_special_config_for_trainee(
     lunch_time_slot: Union[str, None] = None,
     dinner_time_slot: Union[str, None] = None,
     is_suspended: Union[bool, None] = None
-) -> Dict[str, Any]:
+) -> Dict[str, str]:
     conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -487,6 +486,38 @@ def set_special_config_for_trainee(
     except Exception as e:
         conn.rollback()
         close_connection_raise_error(conn, cursor, 500, str(e))
+    finally:
+        close_connection_raise_error(conn, cursor)
+
+@app.post("/api/change-course-interval")
+def change_course_interval(
+    token_number_arr: list[int],
+    new_start_date: Union[str, None] = None,
+    new_end_date: Union[str, None] = None
+) -> Dict[str, str]:
+    conn = psycopg2.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT token_id FROM physical_qr_tokens WHERE token_number = ANY(%s)", (token_number_arr,))
+    res = cursor.fetchall()
+    if not res:
+        close_connection_raise_error(conn, cursor, 404, "None of the token numbers is valid")
+    
+    token_id_arr = [row[0] for row in res]
+    
+    try:
+        cursor.execute('''
+                    UPDATE trainee_assignments SET
+                    course_start_date = COALESCE(%s, course_start_date),
+                    course_end_date = COALESCE(%s, course_end_date)
+                    WHERE token_id = ANY(%s) AND is_active = 1
+                    ''', (new_start_date, new_end_date, token_id_arr)
+                    )
+        conn.commit()
+        return {"status": "success", "message": f"Course Duration updated successfully for {len(token_id_arr)} trainees"}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         close_connection_raise_error(conn, cursor)
 
