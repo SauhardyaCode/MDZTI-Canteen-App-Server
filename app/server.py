@@ -1,5 +1,7 @@
+from typing import Dict, Union, Any
 import psycopg2
-from datetime import datetime, timezone, timedelta
+from psycopg2.extras import execute_values
+from datetime import datetime, timezone, timedelta, _Date
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -82,22 +84,34 @@ def init_db():
                         value TEXT
                    )''')
     
+    cursor.execute('''CREATE TABLE IF NOT EXISTS special_config (
+                        exception_id BIGSERIAL PRIMARY KEY,
+                        token_number INTEGER,
+                        from_date TEXT, --format(YYYY-MM-DD)
+                        to_date TEXT, --format(YYYY-MM-DD),
+                        breakfast_time_slot TEXT DEFAULT NULL,
+                        lunch_time_slot TEXT DEFAULT NULL,
+                        dinner_time_slot TEXT DEFAULT NULL,
+                        is_suspended BOOLEAN DEFAULT NULL
+                   )''')
+    
     conn.commit()
     close_connection_raise_error(conn, cursor)
 
 init_db()
-
 
 def _verify_and_supply_data(
         conn: psycopg2.extensions.connection,
         cursor: psycopg2.extensions.cursor,
         token_id: str,
         token_number: int
-    ) -> dict[str, int | str]:
+    ) -> Dict[str, Union[int, str]]:
     cursor.execute('''
                    SELECT assignment_id, trainee_name, trainee_desg, course_start_date, course_end_date, meal_preference
                    FROM trainee_assignments
-                   WHERE token_id = %s AND is_active = 1''', (token_id,))
+                   WHERE token_id = %s AND is_active = 1
+                   ''', (token_id,)
+                )
     trainee_data = cursor.fetchone()
 
     # Check - Is the QR token assigned to a trainee?
@@ -105,7 +119,7 @@ def _verify_and_supply_data(
         close_connection_raise_error(conn, cursor, 404, "There is no trainee assigned to this Physical QR Token")
     else:
         assigment_id, name, desg, start_date, end_date, preference = trainee_data
-
+    
     current_datetime = get_current_ist_datetime()
     current_date = current_datetime.strftime("%Y-%m-%d")
     current_time = current_datetime.strftime("%H:%M:%S")
@@ -113,18 +127,42 @@ def _verify_and_supply_data(
     # Check - Did the QR token expire for that trainee?
     if (datetime.strptime(end_date.strip(), "%Y-%m-%d").date() < current_datetime.date()):
         close_connection_raise_error(conn, cursor, 403, "Physical QR Token expired for the trainee!")
-        
-    cursor.execute('''
-                   SELECT key, value FROM settings
-                   WHERE key IN ('breakfast_time_slot', 'lunch_time_slot', 'dinner_time_slot')
-                   ''')
-    time_slots = cursor.fetchall()
+
+    cursor.execute("SELECT key, value FROM settings WHERE key LIKE '%_time_slot'")
+    time_slots = {key:value for (key, value) in cursor.fetchall()}
 
     # Check - Have the Meal Slot Timing Settings been initialized?
     if not time_slots:
         close_connection_raise_error(conn, cursor, 422, "Meal Time Slot configuration data not found!")
 
-    for slot_type, slot in time_slots:
+    active_breakfast_slot = time_slots.get("breakfast_time_slot")
+    active_lunch_slot = time_slots.get("lunch_time_slot")
+    active_dinner_slot = time_slots.get("dinner_time_slot")
+
+    cursor.execute('''
+                   SELECT breakfast_time_slot, lunch_time_slot, dinner_time_slot, is_suspended
+                   FROM special_config
+                   WHERE token_number = %s AND %s BETWEEN from_date AND to_date
+                   ORDER BY exception_id DESC LIMIT 1
+                   ''', (token_number, current_date)
+                )
+    active_exception = cursor.fetchone()
+
+    if active_exception:
+        custom_breakfast_slot, custom_lunch_slot, custom_dinner_slot, is_suspended = active_exception
+
+        # Check - Is that trainee suspended from meals for today (due to vacation etc.)?
+        if is_suspended:
+            close_connection_raise_error(conn, cursor, 403, f"Token No. ({token_number}) is suspended from meals today!")
+
+        active_breakfast_slot = custom_breakfast_slot or active_breakfast_slot
+        active_lunch_slot = custom_lunch_slot or active_lunch_slot
+        active_dinner_slot = custom_dinner_slot or active_dinner_slot
+    
+    time_slot_names = ("Breakfast", "Lunch", "Dinner")
+    active_time_slots = (active_breakfast_slot, active_lunch_slot, active_dinner_slot)
+    
+    for slot_type, slot in zip(time_slot_names, active_time_slots):
         if is_time_in_slot(current_time, slot):
             cursor.execute("SELECT scan_time FROM qr_scans WHERE assignment_id = %s AND scan_date = %s",
                            (assigment_id, current_date))
@@ -136,7 +174,7 @@ def _verify_and_supply_data(
                 if is_time_in_slot(scan_time, slot):
                     close_connection_raise_error(
                         conn, cursor, 403,
-                        f"The trainee has already received the meal receipt for {slot_type.upper().replace("_", " ")}!" 
+                        f"The trainee has already taken the meal for {slot_type.upper().replace("_", " ")}!" 
                     )
             try:  
                 cursor.execute(
@@ -144,6 +182,8 @@ def _verify_and_supply_data(
                     VALUES (%s, %s, %s)''', (assigment_id, current_date, current_time)
                 )
                 conn.commit()
+                close_connection_raise_error(conn, cursor)
+
                 return {"status": "success", "token_number": token_number, "trainee_name": name,
                         "trainee_desg": desg, "course_start_date": start_date,
                         "course_end_date": end_date, "meal_preference": preference}
@@ -151,9 +191,7 @@ def _verify_and_supply_data(
             # Check - Did the database refuse to insert the entry?
             except Exception as e:
                 conn.rollback()
-                raise HTTPException(status_code=500, detail=str(e))
-            finally:
-                close_connection_raise_error(conn, cursor)
+                close_connection_raise_error(conn, cursor, 500, str(e))
     
     # Check - Is it the correct time to scan the QR? (No meals right now)
     close_connection_raise_error(conn, cursor, 403, "Not a valid meal slot! Try again later!")
@@ -164,7 +202,7 @@ def home_root():
     return {"message": "The Canteen Backend is fully live and online!"}
 
 @app.post("/api/configure-settings")
-def configure_settings(key: str, value: str):
+def configure_settings(key: str, value: str) -> Dict[str, str]:
     if key not in ALLOWED_CONFIG_KEYS:
         raise HTTPException(
             status_code=400,
@@ -194,7 +232,7 @@ def configure_settings(key: str, value: str):
         close_connection_raise_error(conn, cursor)
 
 @app.post("/api/generate-new-token")
-def generate_new_token():
+def generate_new_token() -> Dict[str, Union[str, int]]:
     conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -215,7 +253,7 @@ def generate_new_token():
         cursor.execute("""INSERT INTO physical_qr_tokens (token_number, token_id)
                        VALUES (%s, %s)""", (new_token_no, new_token_id))
         conn.commit()
-        return {"status": "success", "token_id_no": new_token_no, "final_token_id": new_token_id}
+        return {"status": "success", "token_number": new_token_no, "token_id": new_token_id}
 
     # Check - Did the database refuse to insert the entry?
     except Exception as e:
@@ -232,7 +270,7 @@ def assign_token_to_trainee(
     course_start: str,
     course_end: str,
     meal_preference: str,
-):
+) -> Dict[str, str]:
     conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -270,7 +308,7 @@ def assign_token_to_trainee(
         close_connection_raise_error(conn, cursor)
 
 @app.post("/api/verify-token")
-def verify_scanned_token(token_id: str):
+def verify_scanned_token(token_id: str) -> Dict[str, Union[str, int]]:
     parts = token_id.split('.')
     if (len(parts)!=2):
         raise HTTPException(status_code=404, detail="Invalid QR Code Scanned! (Invalid Format)")
@@ -292,7 +330,7 @@ def verify_scanned_token(token_id: str):
     return _verify_and_supply_data(conn, cursor, token_id=token_id, token_number=token_number)
 
 @app.post("/api/verify-token-manual")
-def verify_typed_token(token_number: int):
+def verify_typed_token(token_number: int) -> Dict[str, Union[str, int]]:
     conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
     
@@ -306,6 +344,151 @@ def verify_typed_token(token_number: int):
         token_id = res[0]
     
     return _verify_and_supply_data(conn, cursor, token_id=token_id, token_number=token_number)
+
+@app.post("/api/apply-special-config")
+def set_special_config_for_trainee(
+    token_number_arr: list[int],
+    date_interval_arr: list[tuple[str, str]],
+    breakfast_time_slot: Union[str, None] = None,
+    lunch_time_slot: Union[str, None] = None,
+    dinner_time_slot: Union[str, None] = None,
+    is_suspended: Union[bool, None] = None
+) -> Dict[str, Any]:
+    conn = psycopg2.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    try:
+        for token_number in token_number_arr:
+            # List of all dates that are queried to be configured are stored (for each token_number)
+            all_incoming_dates: list[datetime] = []
+
+            # For each date interval, we extract each date from it and store it in all_incoming_dates (as _Date)
+            for date_interval in date_interval_arr:
+                start_date, end_date = list(map(lambda x: datetime.strptime(x.strip(), "%Y-%m-%d").date(), date_interval))
+                curr = start_date
+                while curr <= end_date:
+                    all_incoming_dates.append(curr)
+                    curr += timedelta(days=1)
+            
+            if not all_incoming_dates:
+                continue
+
+            # We calculate the lower bound and upper bound of all the queried dates
+            min_bound = min(all_incoming_dates).strftime("%Y-%m-%d")
+            max_bound = max(all_incoming_dates).strftime("%Y-%m-%d")
+
+            # We collect those rows where the existing date intervals overlap with queried dates
+            cursor.execute('''
+                        SELECT exception_id, from_date, to_date, breakfast_time_slot,
+                        lunch_time_slot, dinner_time_slot, is_suspended
+                        FROM special_config
+                        WHERE token_number = %s AND NOT (to_date < %s OR from_date > %s)
+                        ''', (token_number, min_bound, max_bound)
+                        )
+            
+            # Overlapping rows array (list of tuples)
+            overlapping_rows = cursor.fetchall()
+
+            # Dictionary to store _Date (key) and Configuration JSON (value)
+            calendar: Dict[_Date, Dict[str, Any]] = {}
+
+            # List of row_ids (exception_id) to be deleted from the database (and later replaced)
+            row_ids_to_delete = []
+
+            # Iterate over all rows in the overlapping_rows
+            for row in overlapping_rows:
+                # Delete every row from the overlaping_rows list
+                row_id, from_str, to_str, breakfast, lunch, dinner, susp = row
+                row_ids_to_delete.append(row_id)
+
+                # For every interval in each row, we extract each date and map it to the configuration JSON to store in calendar
+                from_date, to_date = list(map(lambda x: datetime.strptime(x.strip(), "%Y-%m-%d").date(), (from_str, to_str)))
+                curr = from_date
+                while curr <= to_date:
+                    calendar[curr] = {
+                        "breakfast": breakfast, "lunch": lunch, "dinner": dinner, "is_suspended": susp
+                    }
+                    curr += timedelta(days=1)
+            
+            # Iterate over all the queried dates all_incoming_dates
+            for date in all_incoming_dates:
+
+                # If a date was present in the database and also in the query then edit the config (where value not NULL)
+                if date in calendar:
+                    calendar[date]["breakfast"] = breakfast_time_slot or calendar[date]["breakfast"]
+                    calendar[date]["lunch"] = lunch_time_slot or calendar[date]["lunch"]
+                    calendar[date]["dinner"] = dinner_time_slot or calendar[date]["dinner"]
+                    calendar[date]["is_suspended"] = is_suspended if is_suspended is not None else calendar[date]["is_suspended"]
+
+                # If a date is not present in the database but is in the query then simply create the config using parameters
+                else:
+                    calendar[date] = {
+                        "breakfast": breakfast_time_slot,
+                        "lunch": lunch_time_slot,
+                        "dinner": dinner_time_slot,
+                        "is_suspended": is_suspended
+                    }
+            
+            # Sort the dates (alrady in the database overlapping region)
+            sorted_dates = sorted(calendar.keys())
+
+            # List to carry new tuples to be inserted in the database
+            new_intervals: list[tuple] = []
+
+            # If calender is not empty (i.e., some overlapping is there)
+            if sorted_dates:
+                start_date = sorted_dates[0]
+                prev_date = sorted_dates[0]
+                current_config = calendar[start_date]
+
+                # Traverse the overlapping dates in sorted order to create intervals
+                for current_date in sorted_dates[1:]:
+                    # To merge dates in same row, dates must be -
+                    # 1. Consecutive (curr = prev + 1)
+                    # 2. The config data must be same for both (config[curr] = config[prev])
+                    if (current_date == prev_date + timedelta(days=1)) and (calendar[current_date] == current_config):
+                        prev_date = current_date
+
+                    # If curr can't be merged in the same row, save the last merged interval and start a new one
+                    else:
+                        new_intervals.append((
+                            token_number, start_date.strftime("%Y-%m-%d"), prev_date.strftime("%Y-%m-%d"),
+                            current_config["breakfast"], current_config["lunch"],
+                            current_config["dinner"], current_config["is_suspended"]
+                        ))
+
+                        start_date = current_date
+                        prev_date = current_date
+                        current_config = calendar[start_date]
+                    
+                # Append the last interval block (that was left)
+                new_intervals.append((
+                    token_number, start_date.strftime("%Y-%m-%d"), prev_date.strftime("%Y-%m-%d"),
+                    current_config["breakfast"], current_config["lunch"],
+                    current_config["dinner"], current_config["is_suspended"]
+                ))
+
+            # Delete the previous interval blocks
+            if row_ids_to_delete:
+                cursor.execute("DELETE FROM special_config WHERE exception_id = ANY(%s)", (row_ids_to_delete,))
+            
+            # Insert all the rows in one query using execute_values()
+            if new_intervals:
+                query = '''
+                        INSERT INTO special_config (token_number, from_date, to_date,
+                        breakfast_time_slot, lunch_time_slot, dinner_time_slot, is_suspended)
+                        VALUES %s
+                        '''
+                execute_values(cursor, query, new_intervals)
+
+        conn.commit()
+        return {"status": "success", "message": "New custom configurations applied!"}
+    
+    except Exception as e:
+        conn.rollback()
+        close_connection_raise_error(conn, cursor, 500, str(e))
+    finally:
+        close_connection_raise_error(conn, cursor)
 
 if __name__ == "__main__":
     import uvicorn
