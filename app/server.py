@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 import os
 from password_hasher import PasswordHasher
 from security_gateway import Authenticator
-import random
 
 load_dotenv()
 DB_PATH = os.getenv("DATABASE_URI")
