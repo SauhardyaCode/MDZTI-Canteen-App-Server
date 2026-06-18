@@ -288,8 +288,8 @@ def assign_token_to_trainee(
     if card_status != "AVAILABLE":
         utilities.close_connection_raise_error(conn, cursor, 400, "The requested Physical QR is already assigned to a trainee!")
 
-    cursor.execute("UPDATE physical_qr_tokens SET card_status = 'ASSIGNED' WHERE token_number = %s", (token_number,))
     try:
+        cursor.execute("UPDATE physical_qr_tokens SET card_status = 'ASSIGNED' WHERE token_number = %s", (token_number,))
         cursor.execute('''INSERT INTO trainee_assignments (token_id, trainee_name, trainee_desg,
                        course_start_date, course_end_date, meal_preference)
                        VALUES (%s, %s, %s, %s, %s, %s)''', 
@@ -523,6 +523,61 @@ def change_course_interval(
     finally:
         utilities.close_connection_raise_error(conn, cursor)
 
+@app.post("/api/destroy-token")
+def destroy_wasted_token(
+    token_number: int,
+    replaced_token_number: Union[int, None] = None
+) -> Dict[str, str]:
+    conn = psycopg2.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("SELECT token_id, card_status FROM physical_qr_tokens WHERE token_number = %s", (token_number,))
+        res = cursor.fetchone()
+
+        if not res:
+            utilities.close_connection_raise_error(conn, cursor, 404, "Invalid Token Number!")
+        
+        token_id, card_status = res
+        if card_status == "ASSIGNED":
+            if replaced_token_number is None:
+                utilities.close_connection_raise_error(
+                    conn, cursor, 422,
+                    "Token is assigned to a trainee, and needs another token to substitute!"
+                )
+            cursor.execute(
+                """
+                SELECT token_id FROM physical_qr_tokens
+                WHERE token_number = %s AND card_status = 'AVAILABLE'
+                """, (replaced_token_number,)
+            )
+            res = cursor.fetchone()
+
+            if not res:
+                utilities.close_connection_raise_error(
+                    conn, cursor, 404,
+                    "The Substitute Token is not available for assignment!"
+                )
+            
+            replaced_token_id = res[0]
+            cursor.execute("UPDATE trainee_assignments SET token_id = %s WHERE token_id = %s", (replaced_token_id, token_id))
+            cursor.execute("UPDATE physical_qr_tokens SET card_status = 'ASSIGNED' WHERE token_id = %s", (replaced_token_id,))
+            cursor.execute(
+                "UPDATE special_config SET token_number = %s WHERE token_number = %s",
+                (replaced_token_number, token_number)
+            )
+        
+        cursor.execute("DELETE FROM physical_qr_tokens WHERE token_number = %s", (token_number,))
+        conn.commit()
+        return {"status": "success", "message": f"Successfully removed Token No. ({token_number}) from database!"}
+    
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        utilities.close_connection_raise_error(conn, cursor)
+
+    
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("LISTEN_PORT")))
