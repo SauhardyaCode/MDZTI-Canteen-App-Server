@@ -99,6 +99,16 @@ class UtilityFunctions:
         if status_code != 200:
             raise HTTPException(status_code=status_code, detail=error_message)
     
+    def invalidate_client_cache(self, cursor: psycopg2.extensions.cursor) -> None:
+        cursor.execute(
+            """
+                INSERT INTO settings (key, value)
+                VALUES ('last_updated', %s)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            """,
+            (self.get_current_ist_datetime().isoformat(),)
+        )
+    
     def verify_token_and_supply_data(
         self,
         conn: psycopg2.extensions.connection,
@@ -215,13 +225,15 @@ def configure_settings(key: str, value: str) -> Dict[str, str]:
     cursor = conn.cursor()
     
     try:
-        query = """
+        cursor.execute(
+            """
                 INSERT INTO settings (key, value)
                 VALUES (%s, %s)
-                ON CONFLICT
+                ON CONFLICT (key)
                 DO UPDATE SET value = EXCLUDED.value
-        """
-        cursor.execute(query, (key, value))
+            """, (key, value)
+        )
+        utilities.invalidate_client_cache(cursor)
         conn.commit()
         return {
             "status": "success",
@@ -291,12 +303,14 @@ def assign_token_to_trainee(
 
     try:
         cursor.execute("UPDATE physical_qr_tokens SET card_status = 'ASSIGNED' WHERE token_number = %s", (token_number,))
-        cursor.execute('''INSERT INTO trainee_assignments (token_id, trainee_name, trainee_desg,
-                       course_start_date, course_end_date, meal_preference)
-                       VALUES (%s, %s, %s, %s, %s, %s)''', 
-                       (token_id, trainee_name, trainee_desg, course_start,
-                        course_end, meal_preference)
-                    )
+        cursor.execute(
+            '''
+                INSERT INTO trainee_assignments (token_id, trainee_name, trainee_desg,
+                course_start_date, course_end_date, meal_preference)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            ''', (token_id, trainee_name, trainee_desg, course_start, course_end, meal_preference)
+        )
+        utilities.invalidate_client_cache(cursor)
         conn.commit()
         return {"status": "success", "token_id": token_id, "trainee_name": trainee_name,
                 "trainee_desg": trainee_desg, "course_start": course_start,
@@ -483,6 +497,7 @@ def set_special_config_for_trainee(
                         '''
                 execute_values(cursor, query, new_intervals)
 
+        utilities.invalidate_client_cache(cursor)
         conn.commit()
         return {"status": "success", "message": "New custom configurations applied!"}
     
