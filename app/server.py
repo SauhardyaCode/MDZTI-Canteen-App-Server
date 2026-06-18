@@ -56,6 +56,7 @@ class UtilityFunctions:
                             FOREIGN KEY (assignment_id) REFERENCES trainee_assignments (assignment_id)
                     )''')
         
+        # keys (breakfast_time_slot, lunch_time_slot, dinner_time_slot, last_updated, last_polled)
         cursor.execute('''CREATE TABLE IF NOT EXISTS settings (
                             key TEXT UNIQUE,
                             value TEXT
@@ -577,7 +578,107 @@ def destroy_wasted_token(
     finally:
         utilities.close_connection_raise_error(conn, cursor)
 
-    
+@app.post("/api/sync-nudge")
+def send_updates_if_any(last_sync_str: str) -> Dict[str, Any]:
+    last_sync_time = datetime.fromisoformat(last_sync_str)
+    current_time = utilities.get_current_ist_datetime()
+    current_time_str = current_time.isoformat()
+
+    conn = psycopg2.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT value FROM settings WHERE key = 'last_updated'")
+    res = cursor.fetchone()
+
+    try:
+        if not res:
+            cursor.execute(
+                '''
+                    INSERT INTO settings (key, value)
+                    VALUES ('last_updated', %s)
+                ''', (current_time_str,)
+            )
+            last_updated_str = current_time_str
+        else:
+            last_updated_str = res[0]
+        
+        last_updated_time = datetime.fromisoformat(last_updated_str)
+        cursor.execute(
+            '''
+                INSERT INTO settings (key, value)
+                VALUES ('last_polled', %s)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            ''', (current_time_str,)
+        )
+        conn.commit()
+
+        # Trainee or tokens updated after last sync
+        if last_updated_time > last_sync_time:
+            cursor.execute("SELECT key, value FROM settings WHERE key LIKE '%_time_slot'")
+            settings = {key: value for key, value in cursor.fetchall()}
+            
+            cursor.execute(
+                '''SELECT 
+                    p.token_number,
+                    t.token_id,
+                    t.trainee_name,
+                    t.trainee_desg,
+                    t.course_start_date,
+                    t.course_end_date,
+                    t.meal_preference
+                FROM trainee_assignments AS t
+                INNER JOIN physical_qr_tokens AS p
+                ON t.token_id = p.token_id WHERE t.is_active = 1'''
+            )
+            assignments = [
+                {
+                    "token_number": token_number,
+                    "token_id": token_id,
+                    "trainee_name": name,
+                    "trainee_desg": desg,
+                    "course_start_date": start,
+                    "course_end_date": end,
+                    "meal_preference": preference
+                }
+                for token_number, token_id, name, desg, start, end, preference in cursor.fetchall()
+            ]
+
+            cursor.execute(
+                '''
+                    SELECT token_number, from_date, to_date, breakfast_time_slot,
+                    lunch_time_slot, dinner_time_slot, is_suspended
+                    FROM special_config WHERE to_date >= %s
+                ''', (current_time.strftime("%Y-%m-%d"),))
+            exceptions = [
+                {
+                    "token_number": token,
+                    "from_date": from_d,
+                    "to_date": to_d,
+                    "breakfast_time_slot": breakfast,
+                    "lunch_time_slot": lunch,
+                    "dinner_time_slot": dinner,
+                    "is_suspended": susp
+                }
+                for token, from_d, to_d, breakfast, lunch, dinner, susp in cursor.fetchall()
+            ]
+
+            return {
+                "status": "synced_now",
+                "server_sync_time": current_time_str,
+                "assignments": assignments,
+                "settings": settings,
+                "exceptions": exceptions
+            }
+        
+        return {"status": "up_to_date", "server_sync_time": current_time_str}
+            
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        utilities.close_connection_raise_error(conn, cursor)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("LISTEN_PORT")))
