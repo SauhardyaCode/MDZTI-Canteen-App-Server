@@ -1,7 +1,7 @@
 from typing import Dict, Union, Any
 import psycopg2
 from psycopg2.extras import execute_values
-from datetime import datetime, timezone, timedelta, date
+from datetime import datetime, timezone, timedelta, date as DATE
 import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends
@@ -462,7 +462,7 @@ def set_special_config_for_trainee(
             overlapping_rows = cursor.fetchall()
 
             # Dictionary to store date (key) and Configuration JSON (value)
-            calendar: Dict[date, Dict[str, Any]] = {}
+            calendar: Dict[DATE, Dict[str, Any]] = {}
 
             # List of row_ids (exception_id) to be deleted from the database (and later replaced)
             row_ids_to_delete = []
