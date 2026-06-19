@@ -2,6 +2,8 @@ from typing import Dict, Union, Any
 import psycopg2
 from psycopg2.extras import execute_values
 from datetime import datetime, timezone, timedelta, _Date
+import asyncio
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -12,19 +14,6 @@ from security_gateway import Authenticator
 load_dotenv()
 DB_PATH = os.getenv("DATABASE_URI")
 SECRET_KEY = os.getenv("MUTUAL_SECRET_KEY")
-hasher = PasswordHasher()
-authenticator = Authenticator(DB_PATH, SECRET_KEY)
-app = FastAPI(title="Hostel Canteen Central Node",
-              dependencies=[Depends(authenticator.verify_frontend_app_authenticity)])
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allows requests from any client machine
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-ALLOWED_CONFIG_KEYS = {"breakfast_time_slot", "lunch_time_slot", "dinner_time_slot", "only_veg_days"} # more to be added later
 
 class UtilityFunctions:
     def initialize_database(self):
@@ -32,7 +21,7 @@ class UtilityFunctions:
         cursor = conn.cursor()
         cursor.execute('''CREATE TABLE IF NOT EXISTS physical_qr_tokens (
                             token_number INTEGER PRIMARY KEY,
-                            token_id TEXT,
+                            token_id TEXT UNIQUE,
                             card_status TEXT DEFAULT 'AVAILABLE'
                     )''')
         
@@ -183,40 +172,96 @@ class UtilityFunctions:
         time_slot_names = ("Breakfast", "Lunch", "Dinner")
         active_time_slots = (active_breakfast_slot, active_lunch_slot, active_dinner_slot)
         
+        matched_slot_name = None
+        matched_slot_value = None
+
         for slot_type, slot in zip(time_slot_names, active_time_slots):
             if self.is_time_in_slot(current_time, slot):
-                cursor.execute("SELECT scan_time FROM qr_scans WHERE assignment_id = %s AND scan_date = %s",
-                            (assigment_id, current_date))
-                scan_times_today = [res[0] for res in cursor.fetchall()]
-
-                for scan_time in scan_times_today:
-
-                    # Check - Has the trainee already taken the meal receipt for that slot that day?
-                    if self.is_time_in_slot(scan_time, slot):
-                        self.close_connection_raise_error(
-                            conn, cursor, 403,
-                            f"The trainee has already taken the meal for {slot_type.upper().replace("_", " ")}!" 
-                        )
-                try:  
-                    cursor.execute(
-                        '''INSERT INTO qr_scans (assignment_id, scan_date, scan_time)
-                        VALUES (%s, %s, %s)''', (assigment_id, current_date, current_time)
-                    )
-                    conn.commit()
-                    self.close_connection_raise_error(conn, cursor)
-
-                    return {"status": "success", "token_number": token_number, "trainee_name": name,
-                            "trainee_desg": desg, "course_start_date": start_date,
-                            "course_end_date": end_date, "meal_preference": preference, "warning": warning}
-                
-                # Check - Did the database refuse to insert the entry?
-                except Exception as e:
-                    conn.rollback()
-                    self.close_connection_raise_error(conn, cursor, 500, str(e))
+                matched_slot_name = slot_type
+                matched_slot_value = slot
+                break
         
-        # Check - Is it the correct time to scan the QR? (No meals right now)
-        self.close_connection_raise_error(conn, cursor, 403, "Not a valid meal slot! Try again later!")
+        if not matched_slot_name:
+            # Check - Is it the correct time to scan the QR? (No meals right now)
+            self.close_connection_raise_error(conn, cursor, 403, "Not a valid meal slot! Try again later!")
+        
+        cursor.execute(
+            "SELECT scan_time FROM qr_scans WHERE assignment_id = %s AND scan_date = %s",
+            (assigment_id, current_date)
+        )
+        scan_times_today = [res[0] for res in cursor.fetchall()]
 
+        for scan_time in scan_times_today:
+            # Check - Has the trainee already taken the meal receipt for that slot that day?
+            if self.is_time_in_slot(scan_time, matched_slot_value):
+                self.close_connection_raise_error(
+                    conn, cursor, 403,
+                    f"The trainee has already taken the meal for {matched_slot_name.upper()}!" 
+                )
+        try:  
+            cursor.execute(
+                '''INSERT INTO qr_scans (assignment_id, scan_date, scan_time)
+                VALUES (%s, %s, %s)''', (assigment_id, current_date, current_time)
+            )
+            conn.commit()
+            self.close_connection_raise_error(conn, cursor)
+
+            return {"status": "success", "token_number": token_number, "trainee_name": name,
+                    "trainee_desg": desg, "course_start_date": start_date,
+                    "course_end_date": end_date, "meal_preference": preference, "warning": warning}
+        
+        # Check - Did the database refuse to insert the entry?
+        except Exception as e:
+            conn.rollback()
+            self.close_connection_raise_error(conn, cursor, 500, str(e))
+
+async def run_daily_cleanup_loop():
+    while True:
+        print("Running scheduled database cleanup via lifespan worker...")
+        try:
+            conn = psycopg2.connect(DB_PATH)
+            cursor = conn.cursor()
+
+            current_date = utilities.get_current_ist_datetime().strftime("%Y-%m-%d")
+            cursor.execute("DELETE FROM special_config WHERE to_date < %s", (current_date,))
+            conn.commit()
+            print("Cleanup for special_config old data done successfully!")
+        except Exception as e:
+            print(f"Cleanup couldn't be completed. Error: {str(e)}")
+        finally:
+            if 'cursor' in locals(): cursor.close()
+            if 'conn' in locals(): conn.close()
+        
+        # Sleep for 24 hours before next cleanup
+        await asyncio.sleep(60 * 60 * 24)
+
+@asynccontextmanager
+async def lifespan_tasks(app: FastAPI):
+    print("Server booting up... Launching Background Tasks...")
+    cleanup_task = asyncio.create_task(run_daily_cleanup_loop())
+    yield
+
+    print("Server shutting down... Cancelling worker tasks...")
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError as e:
+        print("Background Task Cancelled:", str(e))
+
+hasher = PasswordHasher()
+authenticator = Authenticator(DB_PATH, SECRET_KEY)
+app = FastAPI(title="Hostel Canteen Central Node",
+              lifespan=lifespan_tasks,
+              dependencies=[Depends(authenticator.verify_frontend_app_authenticity)])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows requests from any client machine
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+ALLOWED_CONFIG_KEYS = {"breakfast_time_slot", "lunch_time_slot", "dinner_time_slot", "only_veg_days"} # more to be added later
 utilities = UtilityFunctions()
 utilities.initialize_database()
 
