@@ -24,7 +24,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ALLOWED_CONFIG_KEYS = {"breakfast_time_slot", "lunch_time_slot", "dinner_time_slot"} # more to be added later
+ALLOWED_CONFIG_KEYS = {"breakfast_time_slot", "lunch_time_slot", "dinner_time_slot", "only_veg_days"} # more to be added later
 
 class UtilityFunctions:
     def initialize_database(self):
@@ -56,7 +56,7 @@ class UtilityFunctions:
                             FOREIGN KEY (assignment_id) REFERENCES trainee_assignments (assignment_id)
                     )''')
         
-        # keys (breakfast_time_slot, lunch_time_slot, dinner_time_slot, last_updated, last_polled)
+        # keys (breakfast_time_slot, lunch_time_slot, dinner_time_slot, last_updated, last_polled, only_veg_days)
         cursor.execute('''CREATE TABLE IF NOT EXISTS settings (
                             key TEXT UNIQUE,
                             value TEXT
@@ -123,6 +123,7 @@ class UtilityFunctions:
                     ''', (token_id,)
                     )
         trainee_data = cursor.fetchone()
+        warning = None
 
         # Check - Is the QR token assigned to a trainee?
         if not trainee_data:
@@ -138,16 +139,26 @@ class UtilityFunctions:
         if (datetime.strptime(end_date.strip(), "%Y-%m-%d").date() < current_datetime.date()):
             self.close_connection_raise_error(conn, cursor, 403, "Physical QR Token expired for the trainee!")
 
-        cursor.execute("SELECT key, value FROM settings WHERE key LIKE '%_time_slot'")
-        time_slots = {key:value for (key, value) in cursor.fetchall()}
+        cursor.execute("SELECT key, value FROM settings WHERE key LIKE '%_time_slot' OR key = 'only_veg_days'")
+        settings: Dict[str, str] = {key:value for (key, value) in cursor.fetchall()}
+
+        time_slot_keys = ("breakfast_time_slot", "lunch_time_slot", "dinner_time_slot")
 
         # Check - Have the Meal Slot Timing Settings been initialized?
-        if not time_slots:
+        if not all([slot in settings for slot in time_slot_keys]):
             self.close_connection_raise_error(conn, cursor, 422, "Meal Time Slot configuration data not found!")
 
-        active_breakfast_slot = time_slots.get("breakfast_time_slot")
-        active_lunch_slot = time_slots.get("lunch_time_slot")
-        active_dinner_slot = time_slots.get("dinner_time_slot")
+        active_breakfast_slot = settings.get(time_slot_keys[0])
+        active_lunch_slot = settings.get(time_slot_keys[1])
+        active_dinner_slot = settings.get(time_slot_keys[2])
+        only_veg_days = settings.get("only_veg_days")
+
+        if only_veg_days and only_veg_days.strip():
+            only_veg_days_arr = [day.strip().title() for day in only_veg_days.split(',') if day.strip()]
+            if current_datetime.strftime("%a") in only_veg_days_arr:
+                preference = "VEG (same for all today)"
+        else:
+            warning = "Weekdays for only VEG not set in setting yet!"
 
         cursor.execute('''
                     SELECT breakfast_time_slot, lunch_time_slot, dinner_time_slot, is_suspended
@@ -196,7 +207,7 @@ class UtilityFunctions:
 
                     return {"status": "success", "token_number": token_number, "trainee_name": name,
                             "trainee_desg": desg, "course_start_date": start_date,
-                            "course_end_date": end_date, "meal_preference": preference}
+                            "course_end_date": end_date, "meal_preference": preference, "warning": warning}
                 
                 # Check - Did the database refuse to insert the entry?
                 except Exception as e:
