@@ -1,7 +1,7 @@
 from typing import Dict, Union, Any
 import psycopg2
 from psycopg2.extras import execute_values
-from datetime import datetime, timezone, timedelta, _Date
+from datetime import datetime, timezone, timedelta, date
 import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends
@@ -434,7 +434,7 @@ def set_special_config_for_trainee(
             # List of all dates that are queried to be configured are stored (for each token_number)
             all_incoming_dates: list[datetime] = []
 
-            # For each date interval, we extract each date from it and store it in all_incoming_dates (as _Date)
+            # For each date interval, we extract each date from it and store it in all_incoming_dates (as date)
             for date_interval in date_interval_arr:
                 start_date, end_date = list(map(lambda x: datetime.strptime(x.strip(), "%Y-%m-%d").date(), date_interval))
                 curr = start_date
@@ -461,8 +461,8 @@ def set_special_config_for_trainee(
             # Overlapping rows array (list of tuples)
             overlapping_rows = cursor.fetchall()
 
-            # Dictionary to store _Date (key) and Configuration JSON (value)
-            calendar: Dict[_Date, Dict[str, Any]] = {}
+            # Dictionary to store date (key) and Configuration JSON (value)
+            calendar: Dict[date, Dict[str, Any]] = {}
 
             # List of row_ids (exception_id) to be deleted from the database (and later replaced)
             row_ids_to_delete = []
