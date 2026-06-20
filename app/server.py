@@ -329,7 +329,7 @@ def generate_new_token(total_tokens) -> Dict[str, Union[str, int]]:
     cursor = conn.cursor()
 
     try:
-        cursor.execute("SELECT COALESCE(MAX(token_number), 0) + %s FROM physical_qr_tokens", (total_tokens))
+        cursor.execute("SELECT COALESCE(MAX(token_number), 0) + %s FROM physical_qr_tokens", (total_tokens,))
         search_limit = cursor.fetchone()[0]
 
         cursor.execute(
