@@ -298,7 +298,7 @@ def configure_settings(key: str, value: str) -> Dict[str, str]:
 
 @app.get("/api/get-existing-token-data")
 def get_existing_token_data() -> Dict[str, int]:
-    conn = psycopg2.connect()
+    conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
 
     try:
