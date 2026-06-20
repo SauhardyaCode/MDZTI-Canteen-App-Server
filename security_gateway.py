@@ -27,7 +27,7 @@ class Authenticator:
         cursor.close()
         conn.close()
 
-    def __get_current_ist_datetime() -> datetime:
+    def __get_current_ist_datetime(self) -> datetime:
         aware_current_time_utc = datetime.now(timezone.utc)
         aware_current_time_ist = aware_current_time_utc + timedelta(hours=5, minutes=30)
         current_time_ist = aware_current_time_ist.replace(tzinfo=None)
