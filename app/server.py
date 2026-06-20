@@ -321,7 +321,7 @@ def get_existing_token_data() -> Dict[str, int]:
     except Exception as e:
         raise HTTPException(500, str(e))
     finally:
-        utilities.close_connection_raise_error()
+        utilities.close_connection_raise_error(conn, cursor)
 
 @app.post("/api/generate-new-token")
 def generate_new_token(total_tokens) -> Dict[str, Union[str, Any]]:
