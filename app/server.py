@@ -198,22 +198,17 @@ class UtilityFunctions:
                     conn, cursor, 403,
                     f"The trainee has already taken the meal for {matched_slot_name.upper()}!" 
                 )
-        try:  
-            cursor.execute(
-                '''INSERT INTO qr_scans (assignment_id, scan_date, scan_time)
-                VALUES (%s, %s, %s)''', (assigment_id, current_date, current_time)
-            )
-            conn.commit()
-            self.close_connection_raise_error(conn, cursor)
 
-            return {"status": "success", "token_number": token_number, "trainee_name": name,
-                    "trainee_desg": desg, "course_start_date": start_date,
-                    "course_end_date": end_date, "meal_preference": preference, "warning": warning}
-        
-        # Check - Did the database refuse to insert the entry?
-        except Exception as e:
-            conn.rollback()
-            self.close_connection_raise_error(conn, cursor, 500, str(e))
+        cursor.execute(
+            '''INSERT INTO qr_scans (assignment_id, scan_date, scan_time)
+            VALUES (%s, %s, %s)''', (assigment_id, current_date, current_time)
+        )
+        conn.commit()
+        self.close_connection_raise_error(conn, cursor)
+
+        return {"status": "success", "token_number": token_number, "trainee_name": name,
+                "trainee_desg": desg, "course_start_date": start_date,
+                "course_end_date": end_date, "meal_preference": preference, "warning": warning}
 
 async def run_daily_cleanup_loop():
     while True:
@@ -301,29 +296,63 @@ def configure_settings(key: str, value: str) -> Dict[str, str]:
     finally:
         utilities.close_connection_raise_error(conn, cursor)
 
+@app.get("/api/get-existing-token-data")
+def get_existing_token_data() -> Dict[str, int]:
+    conn = psycopg2.connect()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+                SELECT 
+                COUNT(*) AS total, 
+                COUNT(*) FILTER (WHERE card_status = 'AVAILABLE') AS available,
+                COUNT(*) FILTER (WHERE card_status = 'ASSIGNED') AS assigned,
+                COALESCE(MAX(token_number), 0) AS max_number
+                FROM physical_qr_tokens
+            """
+        )
+
+        total, available, assigned, max_number = cursor.fetchone()
+        return {
+            "total": total, "available": available,
+            "assigned": assigned, "max_number": max_number
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    finally:
+        utilities.close_connection_raise_error()
+
 @app.post("/api/generate-new-token")
-def generate_new_token() -> Dict[str, Union[str, int]]:
+def generate_new_token(total_tokens) -> Dict[str, Union[str, int]]:
     conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
 
-    cursor.execute("SELECT token_number FROM physical_qr_tokens")
-    existing_token_nos = sorted([row[0] for row in cursor.fetchall()])
-
-    new_token_no = 1
-    for token_number in existing_token_nos:
-        if token_number == new_token_no:
-            new_token_no += 1
-        else:
-            break
-
-    new_token_hash = hasher.create_hash(str(new_token_no))
-    new_token_id = f"{new_token_no}.{new_token_hash}"
-
     try:
-        cursor.execute("""INSERT INTO physical_qr_tokens (token_number, token_id)
-                       VALUES (%s, %s)""", (new_token_no, new_token_id))
+        cursor.execute("SELECT COALESCE(MAX(token_number), 0) + %s FROM physical_qr_tokens", (total_tokens))
+        search_limit = cursor.fetchone()[0]
+
+        cursor.execute(
+            """
+            SELECT s.num FROM generate_series(1, %s) AS s(num)
+            LEFT JOIN physical_qr_tokens p ON s.num = p.token_number
+            WHERE p.token_number IS NULL
+            LIMIT %s
+            """, (search_limit, total_tokens)
+        )
+
+        new_token_numbers = [row[0] for row in cursor.fetchall()]
+        bulk_data = []
+        for token_number in new_token_numbers:
+            token_hash = hasher.create_hash(str(token_number))
+            token_id = f"{token_number}.{token_hash}"
+            bulk_data.append((token_number, token_id))
+        response_data = [{"token_number": data[0], "token_id": data[1]} for data in bulk_data]
+
+        query = "INSERT INTO physical_qr_tokens (token_number, token_id) VALUES %s"
+        execute_values(cursor, query, bulk_data)
         conn.commit()
-        return {"status": "success", "token_number": new_token_no, "token_id": new_token_id}
+        return {"status": "success", "inserted_count": len(bulk_data), "tokens": response_data}
 
     # Check - Did the database refuse to insert the entry?
     except Exception as e:
@@ -344,20 +373,20 @@ def assign_token_to_trainee(
     conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
 
-    cursor.execute("SELECT token_id, card_status FROM physical_qr_tokens WHERE token_number = %s", (token_number,))
-    res = cursor.fetchone()
-
-    # Check - Is the QR token a valid one (available physically)?
-    if not res:
-        utilities.close_connection_raise_error(conn, cursor, 400, "Physical QR Token not found in stock inventory!")
-    else:
-        token_id, card_status = res
-
-    # Check - Is the QR already assigned to another trainee?
-    if card_status != "AVAILABLE":
-        utilities.close_connection_raise_error(conn, cursor, 400, "The requested Physical QR is already assigned to a trainee!")
-
     try:
+        cursor.execute("SELECT token_id, card_status FROM physical_qr_tokens WHERE token_number = %s", (token_number,))
+        res = cursor.fetchone()
+
+        # Check - Is the QR token a valid one (available physically)?
+        if not res:
+            utilities.close_connection_raise_error(conn, cursor, 400, "Physical QR Token not found in stock inventory!")
+        else:
+            token_id, card_status = res
+
+        # Check - Is the QR already assigned to another trainee?
+        if card_status != "AVAILABLE":
+            utilities.close_connection_raise_error(conn, cursor, 400, "The requested Physical QR is already assigned to a trainee!")
+
         cursor.execute("UPDATE physical_qr_tokens SET card_status = 'ASSIGNED' WHERE token_number = %s", (token_number,))
         cursor.execute(
             '''
@@ -392,30 +421,42 @@ def verify_scanned_token(token_id: str) -> Dict[str, Union[str, int]]:
     conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT 1 FROM physical_qr_tokens WHERE token_id = %s", (token_id,))
-    res = cursor.fetchone()
+    try:
+        cursor.execute("SELECT 1 FROM physical_qr_tokens WHERE token_id = %s", (token_id,))
+        res = cursor.fetchone()
 
-    # Check - Is the QR scanned a valid token?
-    if not res:
-        utilities.close_connection_raise_error(conn, cursor, 404, "Invalid QR Code scanned! (Invalid Token Number)")
-    
-    return utilities.verify_token_and_supply_data(conn, cursor, token_id=token_id, token_number=token_number)
+        # Check - Is the QR scanned a valid token?
+        if not res:
+            utilities.close_connection_raise_error(conn, cursor, 404, "Invalid QR Code scanned! (Invalid Token Number)")
+        
+        return utilities.verify_token_and_supply_data(conn, cursor, token_id=token_id, token_number=token_number)
+        
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    finally:
+        utilities.close_connection_raise_error()
 
 @app.post("/api/verify-token-manual")
 def verify_typed_token(token_number: int) -> Dict[str, Union[str, int]]:
     conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT token_id FROM physical_qr_tokens WHERE token_number = %s", (token_number,))
-    res = cursor.fetchone()
+    try:
+        cursor.execute("SELECT token_id FROM physical_qr_tokens WHERE token_number = %s", (token_number,))
+        res = cursor.fetchone()
 
-    # Check - Is the QR scanned a valid token?
-    if not res:
-        utilities.close_connection_raise_error(conn, cursor, 404, "Invalid Token Number (Not Registered)")
-    else:
-        token_id = res[0]
-    
-    return utilities.verify_token_and_supply_data(conn, cursor, token_id=token_id, token_number=token_number)
+        # Check - Is the QR scanned a valid token?
+        if not res:
+            utilities.close_connection_raise_error(conn, cursor, 404, "Invalid Token Number (Not Registered)")
+        else:
+            token_id = res[0]
+        
+        return utilities.verify_token_and_supply_data(conn, cursor, token_id=token_id, token_number=token_number)
+
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    finally:
+        utilities.close_connection_raise_error()
 
 @app.post("/api/apply-special-config")
 def set_special_config_for_trainee(
@@ -572,14 +613,14 @@ def change_course_interval(
     conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
 
-    cursor.execute("SELECT token_id FROM physical_qr_tokens WHERE token_number = ANY(%s)", (token_number_arr,))
-    res = cursor.fetchall()
-    if not res:
-        utilities.close_connection_raise_error(conn, cursor, 404, "None of the token numbers is valid")
-    
-    token_id_arr = [row[0] for row in res]
-    
     try:
+        cursor.execute("SELECT token_id FROM physical_qr_tokens WHERE token_number = ANY(%s)", (token_number_arr,))
+        res = cursor.fetchall()
+        if not res:
+            utilities.close_connection_raise_error(conn, cursor, 404, "None of the token numbers is valid")
+        
+        token_id_arr = [row[0] for row in res]
+    
         cursor.execute('''
                     UPDATE trainee_assignments SET
                     course_start_date = COALESCE(%s, course_start_date),
@@ -589,6 +630,7 @@ def change_course_interval(
                     )
         conn.commit()
         return {"status": "success", "message": f"Course Duration updated successfully for {len(token_id_arr)} trainees"}
+
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -658,10 +700,10 @@ def send_updates_if_any(last_sync_str: str) -> Dict[str, Any]:
     conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
 
-    cursor.execute("SELECT value FROM settings WHERE key = 'last_updated'")
-    res = cursor.fetchone()
-
     try:
+        cursor.execute("SELECT value FROM settings WHERE key = 'last_updated'")
+        res = cursor.fetchone()
+
         if not res:
             cursor.execute(
                 '''
