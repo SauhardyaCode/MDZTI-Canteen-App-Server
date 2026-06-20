@@ -324,7 +324,7 @@ def get_existing_token_data() -> Dict[str, int]:
         utilities.close_connection_raise_error()
 
 @app.post("/api/generate-new-token")
-def generate_new_token(total_tokens) -> Dict[str, Union[str, int]]:
+def generate_new_token(total_tokens) -> Dict[str, Union[str, Any]]:
     conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
 
