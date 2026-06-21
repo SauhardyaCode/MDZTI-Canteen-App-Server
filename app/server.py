@@ -411,9 +411,7 @@ def assign_token_to_trainee(
         )
         utilities.invalidate_client_cache(cursor)
         conn.commit()
-        return {"status": "success", "token_id": token_id, "trainee_name": trainee_name,
-                "trainee_desg": trainee_desg, "course_start": course_start,
-                "course_end": course_end, "meal_preference": meal_preference}
+        return {"status": "success", "token_number": token_number, "trainee_name": trainee_name}
     
     # Check - Did the database refuse to insert the entry?
     except Exception as e:
