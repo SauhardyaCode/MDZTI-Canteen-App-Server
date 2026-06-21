@@ -337,6 +337,27 @@ def get_available_tokens() -> Dict[str, List[int]]:
     finally:
         utilities.close_connection_raise_error(conn, cursor)
 
+@app.get("/api/get-trainee-list")
+def get_trainee_list() -> Dict[str, List[Any]]:
+    conn = psycopg2.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            SELECT p.token_number, t.trainee_name, t.trainee_desg
+            FROM physical_qr_tokens AS p JOIN trainee_assignments t
+            ON p.token_id = t.token_id
+            WHERE t.is_active = 1
+            """
+        )
+        trainees = cursor.fetchall()
+        return {"trainees": trainees}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        utilities.close_connection_raise_error(conn, cursor)
+
 @app.post("/api/generate-new-token")
 def generate_new_token(total_tokens) -> Dict[str, Union[str, Any]]:
     conn = psycopg2.connect(DB_PATH)
