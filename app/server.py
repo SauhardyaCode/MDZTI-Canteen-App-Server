@@ -1,4 +1,4 @@
-from typing import Dict, Union, Any
+from typing import Dict, Union, Any, List
 import psycopg2
 from psycopg2.extras import execute_values
 from datetime import datetime, timezone, timedelta, date as DATE
@@ -296,8 +296,8 @@ def configure_settings(key: str, value: str) -> Dict[str, str]:
     finally:
         utilities.close_connection_raise_error(conn, cursor)
 
-@app.get("/api/get-existing-token-data")
-def get_existing_token_data() -> Dict[str, int]:
+@app.get("/api/get-existing-token-stats")
+def get_existing_token_stats() -> Dict[str, int]:
     conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -320,6 +320,21 @@ def get_existing_token_data() -> Dict[str, int]:
         }
     except Exception as e:
         raise HTTPException(500, str(e))
+    finally:
+        utilities.close_connection_raise_error(conn, cursor)
+
+@app.get("/api/get-available-tokens")
+def get_available_tokens() -> List[int]:
+    conn = psycopg2.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("SELECT token_number FROM physical_qr_tokens WHERE card_status = 'AVAILABLE'")
+        token_numbers = [row[0] for row in cursor.fetchall()]
+
+        return token_numbers
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         utilities.close_connection_raise_error(conn, cursor)
 
@@ -363,7 +378,7 @@ def generate_new_token(total_tokens) -> Dict[str, Union[str, Any]]:
 
 @app.post("/api/assign-token")
 def assign_token_to_trainee(
-    token_number: str,
+    token_number: int,
     trainee_name: str,
     trainee_desg: str,
     course_start: str,
