@@ -4,7 +4,7 @@ from psycopg2.extras import execute_values
 from datetime import datetime, timezone, timedelta, date as DATE
 import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
@@ -639,8 +639,8 @@ def set_special_config_for_trainee(
 
 @app.post("/api/change-course-interval")
 def change_course_interval(
-    token_number_arr: list[int],
-    new_end_date: Union[str, None] = None
+    token_number_arr: List[int] = Query(...),
+    new_end_date: str = Query(...)
 ) -> Dict[str, str]:
     conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
