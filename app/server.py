@@ -640,7 +640,6 @@ def set_special_config_for_trainee(
 @app.post("/api/change-course-interval")
 def change_course_interval(
     token_number_arr: list[int],
-    new_start_date: Union[str, None] = None,
     new_end_date: Union[str, None] = None
 ) -> Dict[str, str]:
     conn = psycopg2.connect(DB_PATH)
@@ -656,10 +655,9 @@ def change_course_interval(
     
         cursor.execute('''
                     UPDATE trainee_assignments SET
-                    course_start_date = COALESCE(%s, course_start_date),
                     course_end_date = COALESCE(%s, course_end_date)
                     WHERE token_id = ANY(%s) AND is_active = 1
-                    ''', (new_start_date, new_end_date, token_id_arr)
+                    ''', (new_end_date, token_id_arr)
                     )
         conn.commit()
         return {"status": "success", "message": f"Course Duration updated successfully for {len(token_id_arr)} trainees"}
