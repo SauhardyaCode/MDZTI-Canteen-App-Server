@@ -383,7 +383,7 @@ def assign_token_to_trainee(
     course_start: str,
     course_end: str,
     meal_preference: str,
-) -> Dict[str, str]:
+) -> Dict[str, Union[str, int]]:
     conn = psycopg2.connect(DB_PATH)
     cursor = conn.cursor()
 
