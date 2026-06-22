@@ -49,7 +49,7 @@ class Authenticator:
         time_difference_ms = abs(current_time_ms - request_time_ms)
         print("Time Difference (sec): ", time_difference_ms/1000)
         
-        if time_difference_ms > (30 * 1000): # 30 seconds threshold
+        if time_difference_ms > (5 * 60 * 1000): # 5 min threshold
             raise HTTPException(
                 status_code=401,
                 detail="Request authorization window has expired."
