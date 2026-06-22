@@ -265,31 +265,36 @@ def home_root():
     return {"message": "The Canteen Backend is fully live and online!"}
 
 @app.post("/api/configure-settings")
-def configure_settings(key: str, value: str) -> Dict[str, str]:
-    if key not in ALLOWED_CONFIG_KEYS:
+def configure_settings(
+    keys: List[str] = Query(...),
+    values: List[str] = Query(...)
+) -> Dict[str, str]:
+    if len(keys) != len(values):
         raise HTTPException(
             status_code=400,
-            detail=f"Modification of the configuration key '{key}' is restricted or invalid."
+            detail=f"Keys and Values array must be of equal length."
         )
-        
-    conn = psycopg2.connect(DB_PATH)
-    cursor = conn.cursor()
-    
+    for key in keys:
+        if key not in ALLOWED_CONFIG_KEYS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Modification of the configuration key '{key}' is restricted or invalid."
+            )
+
     try:
-        cursor.execute(
-            """
-                INSERT INTO settings (key, value)
-                VALUES (%s, %s)
-                ON CONFLICT (key)
-                DO UPDATE SET value = EXCLUDED.value
-            """, (key, value)
-        )
+        conn = psycopg2.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        query = """
+            INSERT INTO settings (key, value)
+            VALUES %s
+            ON CONFLICT (key)
+            DO UPDATE SET value = EXCLUDED.value
+        """
+        execute_values(cursor, query, list(zip(keys, values)))
         utilities.invalidate_client_cache(cursor)
         conn.commit()
-        return {
-            "status": "success",
-            "message": f"Configuration setting '{key}' successfully updated to '{value}'."
-        }
+        return {"status": "success", "message": f"Settings updated successfully!"}
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -325,10 +330,10 @@ def get_existing_token_stats() -> Dict[str, int]:
 
 @app.get("/api/get-available-tokens")
 def get_available_tokens() -> Dict[str, List[int]]:
-    conn = psycopg2.connect(DB_PATH)
-    cursor = conn.cursor()
-
     try:
+        conn = psycopg2.connect(DB_PATH)
+        cursor = conn.cursor()
+
         cursor.execute("SELECT token_number FROM physical_qr_tokens WHERE card_status = 'AVAILABLE'")
         token_numbers = [row[0] for row in cursor.fetchall()]
         return {"token_numbers": token_numbers}
@@ -339,10 +344,10 @@ def get_available_tokens() -> Dict[str, List[int]]:
 
 @app.get("/api/get-trainee-list")
 def get_trainee_list() -> Dict[str, List[Any]]:
-    conn = psycopg2.connect(DB_PATH)
-    cursor = conn.cursor()
-
     try:
+        conn = psycopg2.connect(DB_PATH)
+        cursor = conn.cursor()
+
         cursor.execute(
             """
             SELECT p.token_number, t.trainee_name, t.trainee_desg
@@ -360,10 +365,10 @@ def get_trainee_list() -> Dict[str, List[Any]]:
 
 @app.get("/api/get-settings")
 def get_settings() -> Dict[str, Any]:
-    conn = psycopg2.connect(DB_PATH)
-    cursor = conn.cursor()
-
     try:
+        conn = psycopg2.connect(DB_PATH)
+        cursor = conn.cursor()
+
         cursor.execute("SELECT key, value FROM settings")
         settings = {key:value for (key, value) in cursor.fetchall()}
         return settings
@@ -374,10 +379,10 @@ def get_settings() -> Dict[str, Any]:
 
 @app.get("/api/get-total-meal-data")
 def get_total_meal_data() -> Dict[str, int]:
-    conn = psycopg2.connect(DB_PATH)
-    cursor = conn.cursor()
-
     try:
+        conn = psycopg2.connect(DB_PATH)
+        cursor = conn.cursor()
+
         cursor.execute(
             """
             SELECT
@@ -397,10 +402,10 @@ def get_total_meal_data() -> Dict[str, int]:
 
 @app.get("/api/get-scanned-meal-data")
 def get_scanned_meal_data(target_date: str) -> Dict[str, int]:
-    conn = psycopg2.connect(DB_PATH)
-    cursor = conn.cursor()
-
     try:
+        conn = psycopg2.connect(DB_PATH)
+        cursor = conn.cursor()
+
         cursor.execute(
             """
             SELECT 
@@ -422,10 +427,10 @@ def get_scanned_meal_data(target_date: str) -> Dict[str, int]:
 
 @app.post("/api/generate-new-token")
 def generate_new_token(total_tokens) -> Dict[str, Union[str, Any]]:
-    conn = psycopg2.connect(DB_PATH)
-    cursor = conn.cursor()
-
     try:
+        conn = psycopg2.connect(DB_PATH)
+        cursor = conn.cursor()
+
         cursor.execute("SELECT COALESCE(MAX(token_number), 0) + %s FROM physical_qr_tokens", (total_tokens,))
         search_limit = cursor.fetchone()[0]
 
@@ -467,10 +472,10 @@ def assign_token_to_trainee(
     course_end: str,
     meal_preference: str,
 ) -> Dict[str, Union[str, int]]:
-    conn = psycopg2.connect(DB_PATH)
-    cursor = conn.cursor()
-
     try:
+        conn = psycopg2.connect(DB_PATH)
+        cursor = conn.cursor()
+
         cursor.execute("SELECT token_id, card_status FROM physical_qr_tokens WHERE token_number = %s", (token_number,))
         res = cursor.fetchone()
 
@@ -513,10 +518,10 @@ def verify_scanned_token(token_id: str) -> Dict[str, Union[str, int]]:
     if not hasher.check_password(token_number, token_hash_code):
         raise HTTPException(status_code=404, detail="Invalid QR Code scanned! (Invalid Hash)")
 
-    conn = psycopg2.connect(DB_PATH)
-    cursor = conn.cursor()
-    
     try:
+        conn = psycopg2.connect(DB_PATH)
+        cursor = conn.cursor()
+        
         cursor.execute("SELECT 1 FROM physical_qr_tokens WHERE token_id = %s", (token_id,))
         res = cursor.fetchone()
 
@@ -533,10 +538,10 @@ def verify_scanned_token(token_id: str) -> Dict[str, Union[str, int]]:
 
 @app.post("/api/verify-token-manual")
 def verify_typed_token(token_number: int) -> Dict[str, Union[str, int]]:
-    conn = psycopg2.connect(DB_PATH)
-    cursor = conn.cursor()
-    
     try:
+        conn = psycopg2.connect(DB_PATH)
+        cursor = conn.cursor()
+        
         cursor.execute("SELECT token_id FROM physical_qr_tokens WHERE token_number = %s", (token_number,))
         res = cursor.fetchone()
 
@@ -562,10 +567,10 @@ def set_special_config_for_trainee(
     dinner_time_slot: Union[str, None] = None,
     is_suspended: Union[bool, None] = None
 ) -> Dict[str, str]:
-    conn = psycopg2.connect(DB_PATH)
-    cursor = conn.cursor()
-
     try:
+        conn = psycopg2.connect(DB_PATH)
+        cursor = conn.cursor()
+
         for token_number in token_number_arr:
             # List of all dates that are queried to be configured are stored (for each token_number)
             all_incoming_dates: List[datetime] = []
@@ -707,10 +712,10 @@ def change_course_interval(
     token_number_arr: List[int] = Query(...),
     new_end_date: str = Query(...)
 ) -> Dict[str, str]:
-    conn = psycopg2.connect(DB_PATH)
-    cursor = conn.cursor()
-
     try:
+        conn = psycopg2.connect(DB_PATH)
+        cursor = conn.cursor()
+
         cursor.execute("SELECT token_id FROM physical_qr_tokens WHERE token_number = ANY(%s)", (token_number_arr,))
         res = cursor.fetchall()
         if not res:
@@ -738,10 +743,10 @@ def destroy_wasted_token(
     token_number: int,
     replaced_token_number: Union[int, None] = None
 ) -> Dict[str, str]:
-    conn = psycopg2.connect(DB_PATH)
-    cursor = conn.cursor()
-
     try:
+        conn = psycopg2.connect(DB_PATH)
+        cursor = conn.cursor()
+
         cursor.execute("SELECT token_id, card_status FROM physical_qr_tokens WHERE token_number = %s", (token_number,))
         res = cursor.fetchone()
 
@@ -793,10 +798,10 @@ def send_updates_if_any(last_sync_str: str) -> Dict[str, Any]:
     current_time = utilities.get_current_ist_datetime()
     current_time_str = current_time.isoformat()
 
-    conn = psycopg2.connect(DB_PATH)
-    cursor = conn.cursor()
-
     try:
+        conn = psycopg2.connect(DB_PATH)
+        cursor = conn.cursor()
+
         cursor.execute("SELECT value FROM settings WHERE key = 'last_updated'")
         res = cursor.fetchone()
 
