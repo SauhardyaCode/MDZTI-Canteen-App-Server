@@ -555,8 +555,8 @@ def verify_typed_token(token_number: int) -> Dict[str, Union[str, int]]:
 
 @app.post("/api/apply-special-config")
 def set_special_config_for_trainee(
-    token_number_arr: list[int],
-    date_interval_arr: list[tuple[str, str]],
+    token_number_arr: List[int] = Query(...),
+    date_interval_arr: List[str] = Query(...),
     breakfast_time_slot: Union[str, None] = None,
     lunch_time_slot: Union[str, None] = None,
     dinner_time_slot: Union[str, None] = None,
@@ -568,11 +568,14 @@ def set_special_config_for_trainee(
     try:
         for token_number in token_number_arr:
             # List of all dates that are queried to be configured are stored (for each token_number)
-            all_incoming_dates: list[datetime] = []
+            all_incoming_dates: List[datetime] = []
 
             # For each date interval, we extract each date from it and store it in all_incoming_dates (as date)
             for date_interval in date_interval_arr:
-                start_date, end_date = list(map(lambda x: datetime.strptime(x.strip(), "%Y-%m-%d").date(), date_interval))
+                start_date, end_date = list(map(
+                    lambda x: datetime.strptime(x.strip(), "%Y-%m-%d").date(),
+                    date_interval.split('T')
+                ))
                 curr = start_date
                 while curr <= end_date:
                     all_incoming_dates.append(curr)
@@ -641,7 +644,7 @@ def set_special_config_for_trainee(
             sorted_dates = sorted(calendar.keys())
 
             # List to carry new tuples to be inserted in the database
-            new_intervals: list[tuple] = []
+            new_intervals: List[tuple] = []
 
             # If calender is not empty (i.e., some overlapping is there)
             if sorted_dates:
