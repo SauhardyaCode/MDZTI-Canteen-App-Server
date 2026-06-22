@@ -1,5 +1,5 @@
 import psycopg2
-from datetime import datetime, timezone, timedelta
+import time
 from fastapi import Header, HTTPException
 from password_hasher import PasswordHasher
 
@@ -16,89 +16,81 @@ class Authenticator:
         conn = psycopg2.connect(self.__DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS processed_header_signatures (
-                signature TEXT PRIMARY KEY,
-                received_at TEXT NOT NULL
+            CREATE TABLE IF NOT EXISTS processed_app_nonces (
+                nonce TEXT PRIMARY KEY,
+                received_at_ms BIGINT NOT NULL
             )
         """)
         # Index makes garbage collection lookups near-instantaneous 
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_received_at ON processed_header_signatures(received_at)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_received_at_ms ON processed_app_nonces(received_at_ms)")
         conn.commit()
         cursor.close()
         conn.close()
 
-    def __get_current_ist_datetime(self) -> datetime:
-        aware_current_time_utc = datetime.now(timezone.utc)
-        aware_current_time_ist = aware_current_time_utc + timedelta(hours=5, minutes=30)
-        current_time_ist = aware_current_time_ist.replace(tzinfo=None)
-        return current_time_ist
-
-
     def verify_frontend_app_authenticity(
         self,
-        x_app_timestamp: str = Header(..., description="Format: YYYY-MM-DD HH:MM:SS"),
+        x_app_timestamp: str = Header(..., description="Format: Epoch Milliseconds String"),
+        x_app_nonce: str = Header(..., description="Cryptographically unique random nonce hex"),
         x_app_signature: str = Header(..., description="Custom signature string from PasswordHasher")
     ):
         """
         FastAPI Global Dependency Gatekeeper.
         Protects endpoints against Replay Attacks, Altered Payloads, and Unauthenticated clients.
         """
-        # STEP 1: Time Window Security Gate (Max 10-second request age rule)
         try:
-            request_time = datetime.strptime(x_app_timestamp, "%Y-%m-%d %H:%M:%S")
-            server_current_time_ist = self.__get_current_ist_datetime()
-            time_difference = abs((server_current_time_ist - request_time).total_seconds())
-            print("Time Difference: ",time_difference)
-            if time_difference > 30:
-                raise HTTPException(
-                    status_code=401,
-                    detail="Request authorization window has expired."
-                )
+            current_time_ms = int(time.time() * 1000)
+            request_time_ms = int(x_app_timestamp)
         except ValueError:
             raise HTTPException(
                 status_code=400,
                 detail="Malformed network packet timestamp configuration."
             )
+        
+        time_difference_ms = abs(current_time_ms - request_time_ms)
+        print("Time Difference (sec): ", time_difference_ms/1000)
+        
+        if time_difference_ms > (30 * 1000): # 30 seconds threshold
+            raise HTTPException(
+                status_code=401,
+                detail="Request authorization window has expired."
+            )
 
-        # STEP 2: Connect to SQLite to clear garbage and check for double-spend attempts
         conn = psycopg2.connect(self.__DB_PATH)
         cursor = conn.cursor()
         
         try:
-            cutoff_time_ist = server_current_time_ist - timedelta(minutes=2)
-            cutoff_string = cutoff_time_ist.strftime("%Y-%m-%d %H:%M:%S")
             # Optimization: Wipe logs older than 2 minutes to keep table tiny and fast
-            cursor.execute("DELETE FROM processed_header_signatures WHERE received_at < %s", (cutoff_string,))
+            cutoff_time_ms = current_time_ms - (2 * 60 * 1000)
+            cursor.execute("DELETE FROM processed_app_nonces WHERE received_at_ms < %s", (cutoff_time_ms,))
             
             # Verify if signature exists in the live active nonce pool
-            cursor.execute("SELECT 1 FROM processed_header_signatures WHERE signature = %s", (x_app_signature,))
+            cursor.execute("SELECT 1 FROM processed_app_nonces WHERE nonce = %s", (x_app_nonce,))
             if cursor.fetchone() is not None:
                 raise HTTPException(
                     status_code=401,
                     detail="Security Alert: Transaction signature was already processed. Replay Blocked."
                 )
 
-            # STEP 3: Regenerate deterministic combination using request-independent variables
-            # Using timestamp ensures identity alignment per-second across endpoints
-            expected_combination = f"{self.__MUTUAL_KEY}||{x_app_timestamp}"
+            expected_combination = f"{self.__MUTUAL_KEY}||{x_app_timestamp}||{x_app_nonce}"
 
-            # STEP 4: Final validation assessment
+            # Final validation assessment
             if not self.__hasher.check_password(expected_combination, x_app_signature):
                 raise HTTPException(
                     status_code=401,
                     detail="Application Authentication Blueprint validation failed."
                 )
 
-            # STEP 5: Commit signature to cache database registry to prevent multi-device execution loops
+            # Burn the nonce so it can never be used (inside 2 mins)
             cursor.execute(
-                "INSERT INTO processed_header_signatures (signature, received_at) VALUES (%s, %s)",
-                (x_app_signature, self.__get_current_ist_datetime().strftime("%Y-%m-%d %H:%M:%S"))
+                "INSERT INTO processed_app_nonces (nonce, received_at_ms) VALUES (%s, %s)",
+                (x_app_nonce, current_time_ms)
             )
             conn.commit()
             
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
         finally:
+            cursor.close()
             conn.close()
 
         return True
