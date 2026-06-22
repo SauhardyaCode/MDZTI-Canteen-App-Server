@@ -328,15 +328,18 @@ def get_existing_token_stats() -> Dict[str, int]:
     finally:
         utilities.close_connection_raise_error(conn, cursor)
 
-@app.get("/api/get-available-tokens")
-def get_available_tokens() -> Dict[str, List[int]]:
+@app.get("/api/get-tokens-by-status")
+def get_tokens_by_status() -> Dict[str, List[int]]:
     try:
         conn = psycopg2.connect(DB_PATH)
         cursor = conn.cursor()
 
         cursor.execute("SELECT token_number FROM physical_qr_tokens WHERE card_status = 'AVAILABLE'")
-        token_numbers = [row[0] for row in cursor.fetchall()]
-        return {"token_numbers": token_numbers}
+        available = [row[0] for row in cursor.fetchall()]
+        cursor.execute("SELECT token_number FROM physical_qr_tokens WHERE card_status = 'ASSIGNED'")
+        assigned = [row[0] for row in cursor.fetchall()]
+
+        return {"tokens_available": available, "tokens_assigned": assigned}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
