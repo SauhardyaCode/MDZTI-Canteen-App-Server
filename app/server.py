@@ -358,6 +358,68 @@ def get_trainee_list() -> Dict[str, List[Any]]:
     finally:
         utilities.close_connection_raise_error(conn, cursor)
 
+@app.get("/api/get-settings")
+def get_settings() -> Dict[str, Any]:
+    conn = psycopg2.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("SELECT key, value FROM settings")
+        settings = {key:value for (key, value) in cursor.fetchall()}
+        return settings
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        utilities.close_connection_raise_error(conn, cursor)
+
+@app.get("/api/get-total-meal-data")
+def get_total_meal_data() -> Dict[str, int]:
+    conn = psycopg2.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE meal_preference = 'VEG') AS veg_count,
+                COUNT(*) FILTER (WHERE meal_preference = 'NON-VEG') AS non_veg_count
+            FROM trainee_assignments WHERE is_active = 1
+            """
+        )
+        res = cursor.fetchone()
+        veg_count = res[0] if (res and res[0] is not None) else 0
+        non_veg_count = res[1] if (res and res[1] is not None) else 0
+        return {"veg": veg_count, "non-veg": non_veg_count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        utilities.close_connection_raise_error(conn, cursor)
+
+@app.get("/api/get-scanned-meal-data")
+def get_scanned_meal_data(target_date: str) -> Dict[str, int]:
+    conn = psycopg2.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            SELECT 
+                COUNT(*) FILTER (WHERE t.meal_preference = 'VEG') AS veg_count,
+                COUNT(*) FILTER (WHERE t.meal_preference = 'NON-VEG') AS non_veg_count
+            FROM qr_scans AS q INNER JOIN trainee_assignments AS t
+            ON q.assignment_id = t.assignment_id
+            WHERE q.scan_date = %s;
+            """, (target_date,)
+        )
+        res = cursor.fetchone()
+        veg_count = res[0] if (res and res[0] is not None) else 0
+        non_veg_count = res[1] if (res and res[1] is not None) else 0
+        return {"veg": veg_count, "non-veg": non_veg_count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        utilities.close_connection_raise_error(conn, cursor)
+
 @app.post("/api/generate-new-token")
 def generate_new_token(total_tokens) -> Dict[str, Union[str, Any]]:
     conn = psycopg2.connect(DB_PATH)
