@@ -347,7 +347,7 @@ def get_tokens_by_status() -> Dict[str, List[int]]:
         utilities.close_connection_raise_error(conn, cursor)
 
 @app.get("/api/get-available-tokens-number-and-id")
-def get_available_tokens_number_and_id() -> Dict[str, List[int]]:
+def get_available_tokens_number_and_id() -> Dict[str, List[Any]]:
     try:
         conn = psycopg2.connect(DB_PATH)
         cursor = conn.cursor()
