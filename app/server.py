@@ -34,6 +34,7 @@ class UtilityFunctions:
                             course_start_date TEXT, --format(YYYY-MM-DD)
                             course_end_date TEXT, --format(YYYY-MM-DD)
                             meal_preference TEXT NOT NULL,
+                            token_returned_on TEXT DEFAULT NULL, --format(YYYY-MM-DD)
                             FOREIGN KEY (token_id) REFERENCES physical_qr_tokens (token_id)
                     )''')
         
@@ -381,7 +382,7 @@ def get_settings() -> Dict[str, Any]:
         utilities.close_connection_raise_error(conn, cursor)
 
 @app.get("/api/get-total-meal-data")
-def get_total_meal_data() -> Dict[str, int]:
+def get_total_meal_data(target_date: str) -> Dict[str, int]:
     try:
         conn = psycopg2.connect(DB_PATH)
         cursor = conn.cursor()
@@ -389,10 +390,17 @@ def get_total_meal_data() -> Dict[str, int]:
         cursor.execute(
             """
             SELECT
-                COUNT(*) FILTER (WHERE meal_preference = 'VEG') AS veg_count,
-                COUNT(*) FILTER (WHERE meal_preference = 'NON-VEG') AS non_veg_count
-            FROM trainee_assignments WHERE is_active = 1
-            """
+                COUNT(*) FILTER (WHERE ta.meal_preference = 'VEG' AND COALESCE(sc.is_suspended, False) = False) AS veg,
+                COUNT(*) FILTER (WHERE ta.meal_preference = 'NON-VEG' AND COALESCE(sc.is_suspended, False) = False) AS non_veg
+            FROM trainee_assignments AS ta
+            LEFT JOIN special_config AS sc ON 
+                sc.token_number = (SELECT token_number FROM physical_qr_tokens WHERE token_id = ta.token_id)
+                AND %s BETWEEN sc.from_date AND sc.to_date
+            WHERE
+                %s >= ta.course_start_date 
+                AND %s <= ta.course_end_date
+                AND (ta.token_returned_on IS NULL OR %s < ta.token_returned_on)
+            """, (target_date, target_date, target_date, target_date)
         )
         res = cursor.fetchone()
         veg_count = res[0] if (res and res[0] is not None) else 0
@@ -496,8 +504,8 @@ def assign_token_to_trainee(
         cursor.execute(
             '''
                 INSERT INTO trainee_assignments (token_id, trainee_name, trainee_desg,
-                course_start_date, course_end_date, meal_preference)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                course_start_date, course_end_date, token_returned_on, meal_preference)
+                VALUES (%s, %s, %s, %s, %s, NULL, %s)
             ''', (token_id, trainee_name, trainee_desg, course_start, course_end, meal_preference)
         )
         utilities.invalidate_client_cache(cursor)
@@ -778,7 +786,15 @@ def destroy_wasted_token(
                 )
             
             replaced_token_id = res[0]
-            cursor.execute("UPDATE trainee_assignments SET token_id = %s WHERE token_id = %s", (replaced_token_id, token_id))
+            current_date = utilities.get_current_ist_datetime().strftime("%Y-%m-%d")
+            cursor.execute(
+                "UPDATE trainee_assignments SET token_returned_on = %s WHERE token_id = %s AND is_active = 1",
+                (current_date, token_id)
+            )
+            cursor.execute(
+                "UPDATE trainee_assignments SET token_id = %s WHERE token_id = %s AND is_active = 1",
+                (replaced_token_id, token_id)
+            )
             cursor.execute("UPDATE physical_qr_tokens SET card_status = 'ASSIGNED' WHERE token_id = %s", (replaced_token_id,))
             cursor.execute(
                 "UPDATE special_config SET token_number = %s WHERE token_number = %s",
@@ -842,6 +858,7 @@ def send_updates_if_any(last_sync_str: str) -> Dict[str, Any]:
                     t.trainee_desg,
                     t.course_start_date,
                     t.course_end_date,
+                    t.token_returned_on,
                     t.meal_preference
                 FROM trainee_assignments AS t
                 INNER JOIN physical_qr_tokens AS p
@@ -855,9 +872,10 @@ def send_updates_if_any(last_sync_str: str) -> Dict[str, Any]:
                     "trainee_desg": desg,
                     "course_start_date": start,
                     "course_end_date": end,
+                    "token_returned_on": returned,
                     "meal_preference": preference
                 }
-                for token_number, token_id, name, desg, start, end, preference in cursor.fetchall()
+                for token_number, token_id, name, desg, start, end, returned, preference in cursor.fetchall()
             ]
 
             cursor.execute(
