@@ -346,6 +346,21 @@ def get_tokens_by_status() -> Dict[str, List[int]]:
     finally:
         utilities.close_connection_raise_error(conn, cursor)
 
+@app.get("/api/get-available-tokens-number-and-id")
+def get_available_tokens_number_and_id() -> Dict[str, List[int]]:
+    try:
+        conn = psycopg2.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT token_number, token_id FROM physical_qr_tokens WHERE card_status = 'AVAILABLE'")
+        res = cursor.fetchall()
+        tokens = [{"token_number": row[0], "token_id": row[1]} for row in res]
+        return {"tokens": tokens}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        utilities.close_connection_raise_error(conn, cursor)
+
 @app.get("/api/get-trainee-list")
 def get_trainee_list() -> Dict[str, List[Any]]:
     try:
@@ -451,7 +466,7 @@ def get_scanned_meal_data(target_date: str) -> Dict[str, int]:
         if target_day in veg_day_list:
             veg_count += non_veg_count
             non_veg_count = 0
-            
+
         return {"veg": veg_count, "non-veg": non_veg_count}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
