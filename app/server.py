@@ -387,6 +387,12 @@ def get_total_meal_data(target_date: str) -> Dict[str, int]:
         conn = psycopg2.connect(DB_PATH)
         cursor = conn.cursor()
 
+        cursor.execute("SELECT value FROM settings WHERE key = 'only_veg_days'")
+        res = cursor.fetchone()
+        only_veg_days = res[0] if res else ""
+        veg_day_list = [day.strip().title() for day in only_veg_days.split(',') if day.strip()]
+        target_day = datetime.strptime(target_date, "%Y-%m-%d").strftime("%a")
+
         cursor.execute(
             """
             SELECT
@@ -405,6 +411,11 @@ def get_total_meal_data(target_date: str) -> Dict[str, int]:
         res = cursor.fetchone()
         veg_count = res[0] if (res and res[0] is not None) else 0
         non_veg_count = res[1] if (res and res[1] is not None) else 0
+
+        if target_day in veg_day_list:
+            veg_count += non_veg_count
+            non_veg_count = 0
+
         return {"veg": veg_count, "non-veg": non_veg_count}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -416,6 +427,12 @@ def get_scanned_meal_data(target_date: str) -> Dict[str, int]:
     try:
         conn = psycopg2.connect(DB_PATH)
         cursor = conn.cursor()
+
+        cursor.execute("SELECT value FROM settings WHERE key = 'only_veg_days'")
+        res = cursor.fetchone()
+        only_veg_days = res[0] if res else ""
+        veg_day_list = [day.strip().title() for day in only_veg_days.split(',') if day.strip()]
+        target_day = datetime.strptime(target_date, "%Y-%m-%d").strftime("%a")
 
         cursor.execute(
             """
@@ -430,6 +447,11 @@ def get_scanned_meal_data(target_date: str) -> Dict[str, int]:
         res = cursor.fetchone()
         veg_count = res[0] if (res and res[0] is not None) else 0
         non_veg_count = res[1] if (res and res[1] is not None) else 0
+
+        if target_day in veg_day_list:
+            veg_count += non_veg_count
+            non_veg_count = 0
+            
         return {"veg": veg_count, "non-veg": non_veg_count}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
