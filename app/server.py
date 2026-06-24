@@ -113,7 +113,6 @@ class UtilityFunctions:
                     ''', (token_id,)
                     )
         trainee_data = cursor.fetchone()
-        warning = None
 
         # Check - Is the QR token assigned to a trainee?
         if not trainee_data:
@@ -147,8 +146,6 @@ class UtilityFunctions:
             only_veg_days_arr = [day.strip().title() for day in only_veg_days.split(',') if day.strip()]
             if current_datetime.strftime("%a") in only_veg_days_arr:
                 preference = "VEG (same for all today)"
-        else:
-            warning = "Weekdays for only VEG not set in setting yet!"
 
         cursor.execute('''
                     SELECT breakfast_time_slot, lunch_time_slot, dinner_time_slot, is_suspended
@@ -208,7 +205,7 @@ class UtilityFunctions:
         self.close_connection_raise_error(conn, cursor)
 
         return {"status": "success", "token_number": token_number, "trainee_name": name,
-                "trainee_desg": desg, "meal_preference": preference, "warning": warning}
+                "trainee_desg": desg, "meal_preference": preference}
 
 async def run_daily_cleanup_loop():
     while True:
