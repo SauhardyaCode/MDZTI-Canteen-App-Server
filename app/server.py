@@ -69,7 +69,11 @@ class UtilityFunctions:
     def is_time_in_slot(self, check_time: str, time_slot: str) -> bool:
         start_time, end_time = tuple(map(lambda x: datetime.strptime(x.strip(), "%H:%M:%S").time(), time_slot.split('-')))
         measurable_check_time = datetime.strptime(check_time.strip(), "%H:%M:%S").time()
-        return (start_time <= measurable_check_time <= end_time)
+
+        if start_time <= end_time:
+            return (start_time <= measurable_check_time <= end_time)
+        else:
+            return (start_time <= measurable_check_time or measurable_check_time <= end_time)
 
     def get_current_ist_datetime(self) -> datetime:
         aware_current_time_utc = datetime.now(timezone.utc)
