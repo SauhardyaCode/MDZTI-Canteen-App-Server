@@ -887,7 +887,7 @@ def send_updates_if_any(last_sync_str: str) -> Dict[str, Any]:
 
         # Trainee or tokens updated after last sync
         if last_updated_time > last_sync_time:
-            cursor.execute("SELECT key, value FROM settings WHERE key LIKE '%_time_slot OR key = 'only_veg_days''")
+            cursor.execute("SELECT key, value FROM settings WHERE key LIKE '%_time_slot' OR key = 'only_veg_days'")
             settings = {key: value for key, value in cursor.fetchall()}
             
             cursor.execute(
