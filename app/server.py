@@ -208,8 +208,7 @@ class UtilityFunctions:
         self.close_connection_raise_error(conn, cursor)
 
         return {"status": "success", "token_number": token_number, "trainee_name": name,
-                "trainee_desg": desg, "course_start_date": start_date,
-                "course_end_date": end_date, "meal_preference": preference, "warning": warning}
+                "trainee_desg": desg, "meal_preference": preference, "warning": warning}
 
 async def run_daily_cleanup_loop():
     while True:
@@ -582,7 +581,7 @@ def verify_scanned_token(token_id: str) -> Dict[str, Union[str, int]]:
     except Exception as e:
         raise HTTPException(500, str(e))
     finally:
-        utilities.close_connection_raise_error()
+        utilities.close_connection_raise_error(conn, cursor)
 
 @app.post("/api/verify-token-manual")
 def verify_typed_token(token_number: int) -> Dict[str, Union[str, int]]:
@@ -604,7 +603,7 @@ def verify_typed_token(token_number: int) -> Dict[str, Union[str, int]]:
     except Exception as e:
         raise HTTPException(500, str(e))
     finally:
-        utilities.close_connection_raise_error()
+        utilities.close_connection_raise_error(conn, cursor)
 
 @app.post("/api/apply-special-config")
 def set_special_config_for_trainee(
