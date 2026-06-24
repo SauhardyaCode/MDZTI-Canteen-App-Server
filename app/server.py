@@ -777,6 +777,7 @@ def change_course_interval(
                     WHERE token_id = ANY(%s) AND is_active = 1
                     ''', (new_end_date, token_id_arr)
                     )
+        utilities.invalidate_client_cache(cursor)
         conn.commit()
         return {"status": "success", "message": f"Course Duration updated successfully for {len(token_id_arr)} trainees"}
 
@@ -839,6 +840,8 @@ def destroy_wasted_token(
             )
         
         cursor.execute("DELETE FROM physical_qr_tokens WHERE token_number = %s", (token_number,))
+
+        utilities.invalidate_client_cache(cursor)
         conn.commit()
         return {"status": "success", "message": f"Successfully removed Token No. ({token_number}) from database!"}
     
@@ -884,7 +887,7 @@ def send_updates_if_any(last_sync_str: str) -> Dict[str, Any]:
 
         # Trainee or tokens updated after last sync
         if last_updated_time > last_sync_time:
-            cursor.execute("SELECT key, value FROM settings WHERE key LIKE '%_time_slot'")
+            cursor.execute("SELECT key, value FROM settings WHERE key LIKE '%_time_slot OR key = 'only_veg_days''")
             settings = {key: value for key, value in cursor.fetchall()}
             
             cursor.execute(
