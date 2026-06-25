@@ -568,7 +568,7 @@ def verify_scanned_token(token_id: str) -> Dict[str, Union[str, int]]:
     except ValueError:
         raise HTTPException(status_code=404, detail="Invalid Token Number (within QR Code)")
 
-    if not hasher.check_password(token_number, token_hash_code):
+    if not hasher.check_password(str(token_number), token_hash_code):
         raise HTTPException(status_code=404, detail="Invalid QR Code scanned! (Invalid Hash)")
 
     try:
