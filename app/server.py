@@ -563,6 +563,11 @@ def verify_scanned_token(token_id: str) -> Dict[str, Union[str, int]]:
         raise HTTPException(status_code=404, detail="Invalid QR Code Scanned! (Invalid Format)")
     token_number, token_hash_code = parts
 
+    try:
+        token_number = int(token_number)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Invalid Token Number (within QR Code)")
+
     if not hasher.check_password(token_number, token_hash_code):
         raise HTTPException(status_code=404, detail="Invalid QR Code scanned! (Invalid Hash)")
 
@@ -580,6 +585,7 @@ def verify_scanned_token(token_id: str) -> Dict[str, Union[str, int]]:
         return utilities.verify_token_and_supply_data(conn, cursor, token_id=token_id, token_number=token_number)
         
     except Exception as e:
+        conn.rollback()
         raise HTTPException(500, str(e))
     finally:
         utilities.close_connection_raise_error(conn, cursor)
@@ -602,6 +608,7 @@ def verify_typed_token(token_number: int) -> Dict[str, Union[str, int]]:
         return utilities.verify_token_and_supply_data(conn, cursor, token_id=token_id, token_number=token_number)
 
     except Exception as e:
+        conn.rollback()
         raise HTTPException(500, str(e))
     finally:
         utilities.close_connection_raise_error(conn, cursor)
@@ -787,6 +794,34 @@ def change_course_interval(
     finally:
         utilities.close_connection_raise_error(conn, cursor)
 
+@app.post("/api/unassign-token")
+def take_back_token_from_trainee(token_number: int):
+    try:
+        conn = psycopg2.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT assignment_id FROM trainee_assignments WHERE token_number = %s AND is_active = 1", (token_number,))
+        res = cursor.fetchone()
+
+        if not res:
+            utilities.close_connection_raise_error(conn, cursor, 404, "Token number not assigned to anyone!")
+        
+        current_date = utilities.get_current_ist_datetime().strftime("%Y-%m-%d")
+        cursor.execute("""UPDATE trainee_assignments
+                       SET is_active = 0, token_returned_on = %s
+                       WHERE assignment_id = %s
+                       """, (current_date, res[0]))
+        cursor.execute("UPDATE physical_qr_tokens SET card_status = 'AVAILABLE' WHERE token_number = %s", (token_number,))
+
+        conn.commit()
+        return {"status": "success", "message": f"Succssfully unassigned Token No. ({token_number})!"}
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        utilities.close_connection_raise_error(conn, cursor)
+
 @app.post("/api/destroy-token")
 def destroy_wasted_token(
     token_number: int,
@@ -826,7 +861,7 @@ def destroy_wasted_token(
             replaced_token_id = res[0]
             current_date = utilities.get_current_ist_datetime().strftime("%Y-%m-%d")
             cursor.execute(
-                "UPDATE trainee_assignments SET token_returned_on = %s WHERE token_id = %s AND is_active = 1",
+                "UPDATE trainee_assignments SET token_returned_on = %s, is_active = 0 WHERE token_id = %s AND is_active = 1",
                 (current_date, token_id)
             )
             cursor.execute(
@@ -891,14 +926,14 @@ def send_updates_if_any(last_sync_str: str) -> Dict[str, Any]:
             settings = {key: value for key, value in cursor.fetchall()}
             
             cursor.execute(
-                '''SELECT 
+                '''SELECT
+                    t.assignment_id,
                     p.token_number,
                     t.token_id,
                     t.trainee_name,
                     t.trainee_desg,
                     t.course_start_date,
                     t.course_end_date,
-                    t.token_returned_on,
                     t.meal_preference
                 FROM trainee_assignments AS t
                 INNER JOIN physical_qr_tokens AS p
@@ -906,16 +941,16 @@ def send_updates_if_any(last_sync_str: str) -> Dict[str, Any]:
             )
             assignments = [
                 {
+                    "assignment_id": assignment_id,
                     "token_number": token_number,
                     "token_id": token_id,
                     "trainee_name": name,
                     "trainee_desg": desg,
                     "course_start_date": start,
                     "course_end_date": end,
-                    "token_returned_on": returned,
                     "meal_preference": preference
                 }
-                for token_number, token_id, name, desg, start, end, returned, preference in cursor.fetchall()
+                for assignment_id, token_number, token_id, name, desg, start, end, preference in cursor.fetchall()
             ]
 
             cursor.execute(
