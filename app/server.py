@@ -585,7 +585,6 @@ def verify_scanned_token(token_id: str) -> Dict[str, Union[str, int]]:
         return utilities.verify_token_and_supply_data(conn, cursor, token_id=token_id, token_number=token_number)
         
     except Exception as e:
-        conn.rollback()
         raise HTTPException(500, str(e))
     finally:
         utilities.close_connection_raise_error(conn, cursor)
@@ -608,7 +607,6 @@ def verify_typed_token(token_number: int) -> Dict[str, Union[str, int]]:
         return utilities.verify_token_and_supply_data(conn, cursor, token_id=token_id, token_number=token_number)
 
     except Exception as e:
-        conn.rollback()
         raise HTTPException(500, str(e))
     finally:
         utilities.close_connection_raise_error(conn, cursor)
