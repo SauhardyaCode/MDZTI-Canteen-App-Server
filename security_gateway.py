@@ -1,7 +1,7 @@
-import psycopg2
 import time
 from fastapi import Header, HTTPException
 from password_hasher import PasswordHasher
+from utils import UtilityFunctions
 
 class Authenticator:
     def __init__(self, db_path: str, mutual_key: str):
@@ -13,19 +13,15 @@ class Authenticator:
 
     def __init_security_db(self):
         """Ensures the temporary nonce tracking table is established with index optimization."""
-        conn = psycopg2.connect(self.__DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS processed_app_nonces (
-                nonce TEXT PRIMARY KEY,
-                received_at_ms BIGINT NOT NULL
-            )
-        """)
-        # Index makes garbage collection lookups near-instantaneous 
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_received_at_ms ON processed_app_nonces(received_at_ms)")
-        conn.commit()
-        cursor.close()
-        conn.close()
+        with UtilityFunctions.get_connection(self.__DB_PATH) as cursor:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS processed_app_nonces (
+                    nonce TEXT PRIMARY KEY,
+                    received_at_ms BIGINT NOT NULL
+                )
+            """)
+            # Index makes garbage collection lookups near-instantaneous 
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_received_at_ms ON processed_app_nonces(received_at_ms)")
 
     def verify_frontend_app_authenticity(
         self,
@@ -54,11 +50,8 @@ class Authenticator:
                 status_code=401,
                 detail="Request authorization window has expired."
             )
-
-        conn = psycopg2.connect(self.__DB_PATH)
-        cursor = conn.cursor()
         
-        try:
+        with UtilityFunctions.get_connection(self.__DB_PATH) as cursor:
             # Optimization: Wipe logs older than 2 minutes to keep table tiny and fast
             cutoff_time_ms = current_time_ms - (2 * 60 * 1000)
             cursor.execute("DELETE FROM processed_app_nonces WHERE received_at_ms < %s", (cutoff_time_ms,))
@@ -85,12 +78,5 @@ class Authenticator:
                 "INSERT INTO processed_app_nonces (nonce, received_at_ms) VALUES (%s, %s)",
                 (x_app_nonce, current_time_ms)
             )
-            conn.commit()
-            
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-        finally:
-            cursor.close()
-            conn.close()
 
         return True
