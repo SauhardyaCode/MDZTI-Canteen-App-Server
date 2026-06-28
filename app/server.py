@@ -158,7 +158,8 @@ def get_scanned_meal_data(target_date: str) -> Dict[str, int]:
 
         cursor.execute(
             """
-            SELECT 
+            SELECT
+                q.meal_type,
                 COUNT(*) FILTER (WHERE t.meal_preference = 'VEG') AS veg_count,
                 COUNT(*) FILTER (WHERE t.meal_preference = 'NON-VEG') AS non_veg_count
             FROM qr_scans AS q INNER JOIN trainee_assignments AS t
@@ -168,8 +169,7 @@ def get_scanned_meal_data(target_date: str) -> Dict[str, int]:
             ORDER BY q.meal_type;
             """, (target_date,)
         )
-        res = cursor.fetchone()
-        print(res)
+        res = cursor.fetchall()
         if not res:
             return {}
 
