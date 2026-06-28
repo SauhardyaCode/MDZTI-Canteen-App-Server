@@ -66,6 +66,7 @@ class UtilityFunctions:
                                 scan_date TEXT, --format(YYYY-MM-DD)
                                 scan_time TEXT, --format(HH:MM:SS)
                                 meal_type TEXT,
+                                CONSTRAINT unique_scan UNIQUE (assignment_id, scan_date, scan_time),
                                 FOREIGN KEY (assignment_id) REFERENCES trainee_assignments (assignment_id)
                         )''')
             

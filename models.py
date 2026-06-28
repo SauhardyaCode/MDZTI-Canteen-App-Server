@@ -15,6 +15,12 @@ class TraineeInfo(BaseModel):
 class TokenNumberBase(BaseModel):
     token_number: int
 
+class ScanItem(BaseModel):
+    assignment_id: int
+    date: str
+    time: str
+    meal_type: str
+
 class SettingsPayload(BaseModel):
     settings: List[SettingsItem]
 
@@ -52,3 +58,4 @@ class DestroyTokenPayload(BaseModel):
 
 class SyncNudgePayload(BaseModel):
     last_sync_str: str
+    scans: Optional[List[ScanItem]] = None

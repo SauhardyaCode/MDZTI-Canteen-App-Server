@@ -532,6 +532,18 @@ def send_updates_if_any(payload: models.SyncNudgePayload) -> Dict[str, Any]:
             ''', (current_time_str,)
         )
 
+        if payload.scans is not None:
+            scan_data = [
+                (scan.assignment_id, scan.date, scan.time, scan.meal_type)
+                for scan in payload.scans
+            ]
+            query = """
+                        INSERT INTO qr_scans (assignment_id, scan_date, scan_time, meal_type)
+                        VALUES %s
+                        ON CONFLICT (assignment_id, scan_date, scan_time) DO NOTHING;
+                    """
+            execute_values(cursor, query, scan_data)
+
         # Trainee or tokens updated after last sync
         if last_updated_time > last_sync_time:
             cursor.execute("SELECT key, value FROM settings WHERE key LIKE '%_time_slot' OR key = 'only_veg_days'")
