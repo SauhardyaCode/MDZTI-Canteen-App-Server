@@ -547,7 +547,8 @@ def send_updates_if_any(payload: models.SyncNudgePayload) -> Dict[str, Any]:
                         ON CONFLICT (assignment_id, scan_date, scan_time) DO NOTHING;
                     """
             execute_values(cursor, query, scan_data)
-
+    
+    with UtilityFunctions.get_connection() as cursor:
         # Trainee or tokens updated after last sync
         if last_updated_time > last_sync_time:
             cursor.execute("SELECT key, value FROM settings WHERE key LIKE '%_time_slot' OR key = 'only_veg_days'")
@@ -586,7 +587,8 @@ def send_updates_if_any(payload: models.SyncNudgePayload) -> Dict[str, Any]:
                     SELECT token_number, from_date, to_date, breakfast_time_slot,
                     lunch_time_slot, dinner_time_slot, is_suspended
                     FROM special_config WHERE to_date >= %s
-                ''', (UtilityFunctions.get_date_string(current_datetime),))
+                ''', (UtilityFunctions.get_date_string(current_datetime),)
+            )
             exceptions = [
                 {
                     "token_number": token,
@@ -600,12 +602,29 @@ def send_updates_if_any(payload: models.SyncNudgePayload) -> Dict[str, Any]:
                 for token, from_d, to_d, breakfast, lunch, dinner, susp in cursor.fetchall()
             ]
 
+            cursor.execute(
+                '''
+                    SELECT assignment_id, scan_date, scan_time, meal_type
+                    FROM qr_scans WHERE scan_date = %s
+                ''', (UtilityFunctions.get_date_string(current_datetime),)
+            )
+            scans = [
+                {
+                    "assignment_id": a_id,
+                    "scan_date": s_date,
+                    "scan_time": s_time,
+                    "meal_type": meal
+                }
+                for a_id, s_date, s_time, meal in cursor.fetchall()
+            ]
+
             return {
                 "status": "synced_now",
                 "server_sync_time": current_time_str,
                 "assignments": assignments,
                 "settings": settings,
-                "exceptions": exceptions
+                "exceptions": exceptions,
+                "scans": scans
             }
         
         return {"status": "up_to_date", "server_sync_time": current_time_str}
