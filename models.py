@@ -12,9 +12,6 @@ class TraineeInfo(BaseModel):
     course_end: str
     meal_preference: str
 
-class TokenNumberBase(BaseModel):
-    token_number: int
-
 class ScanItem(BaseModel):
     assignment_id: int
     date: str
@@ -34,8 +31,8 @@ class AssignTokenPayload(BaseModel):
 class VerifyScannedTokenPayload(BaseModel):
     token_id: str
 
-class VerifyTypedTokenPayload(TokenNumberBase):
-    pass
+class VerifyTypedTokenPayload(BaseModel):
+    token_number: int
 
 class SpecialConfigPayload(BaseModel):
     token_number_arr: List[int]
@@ -49,8 +46,8 @@ class ChangeCourseIntervalPayload(BaseModel):
     token_number_arr: List[int]
     new_end_date: str
 
-class UnassignTokenPayload(TokenNumberBase):
-    token_numbers: List[TokenNumberBase]
+class UnassignTokenPayload(BaseModel):
+    token_numbers: List[int]
 
 class DestroyTokenPayload(BaseModel):
     token_number: int
