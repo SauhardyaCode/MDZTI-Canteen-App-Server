@@ -170,6 +170,8 @@ def get_scanned_meal_data(target_date: str) -> Dict[str, int]:
             """, (target_date,)
         )
         res = cursor.fetchall()
+        
+        print(res)
         if not res:
             return {}
 
