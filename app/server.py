@@ -446,7 +446,7 @@ def change_course_interval(payload: models.ChangeCourseIntervalPayload) -> Dict[
 @app.post("/api/unassign-tokens")
 def take_back_token_from_trainee(payload: models.UnassignTokenPayload):
     with UtilityFunctions.get_connection() as cursor:
-        cursor.execute("SELECT token_id FROM physical_qr_tokens WHERE token_number = ANY(%s)", (payload.token_numbers,))
+        cursor.execute("SELECT token_id FROM physical_qr_tokens WHERE token_number = ANY(%s)", (payload.token_number_arr,))
         res = cursor.fetchall()
 
         if not res:
