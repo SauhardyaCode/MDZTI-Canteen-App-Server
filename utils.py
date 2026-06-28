@@ -251,7 +251,7 @@ class UtilityFunctions:
         )
 
         return {"status": "success", "token_number": token_number, "trainee_name": name,
-                "trainee_desg": desg, "meal_preference": preference}
+                "trainee_desg": desg, "meal_preference": preference, "meal_type": matched_slot_name}
     
     @staticmethod
     async def run_daily_cleanup_loop():
