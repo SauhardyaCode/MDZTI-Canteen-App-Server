@@ -148,7 +148,7 @@ def get_total_meal_data() -> Dict[str, int]:
         return {"veg": veg_count, "non-veg": non_veg_count}
 
 @app.get("/api/get-scanned-meal-data")
-def get_scanned_meal_data(target_date: str) -> Dict[str, int]:
+def get_scanned_meal_data(target_date: str) -> Dict[str, Dict[str, int]]:
     with UtilityFunctions.get_connection() as cursor:
         cursor.execute("SELECT value FROM settings WHERE key = 'only_veg_days'")
         res = cursor.fetchone()
