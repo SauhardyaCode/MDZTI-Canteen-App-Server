@@ -249,7 +249,8 @@ class UtilityFunctions:
             '''INSERT INTO qr_scans (assignment_id, scan_date, scan_time, meal_type)
             VALUES (%s, %s, %s, %s)''', (assignment_id, current_date, current_time, matched_slot_name)
         )
-
+        
+        UtilityFunctions.invalidate_client_cache(cursor)
         return {"status": "success", "token_number": token_number, "trainee_name": name,
                 "trainee_desg": desg, "meal_preference": preference, "meal_type": matched_slot_name}
     
