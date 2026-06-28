@@ -446,26 +446,24 @@ def change_course_interval(payload: models.ChangeCourseIntervalPayload) -> Dict[
 @app.post("/api/unassign-token")
 def take_back_token_from_trainee(payload: models.UnassignTokenPayload):
     with UtilityFunctions.get_connection() as cursor:
-        cursor.execute("SELECT token_id FROM physical_qr_tokens WHERE token_number = %s", (payload.token_number,))
-        res = cursor.fetchone()
+        cursor.execute("SELECT token_id FROM physical_qr_tokens WHERE token_number = ANY(%s)", (payload.token_numbers,))
+        res = cursor.fetchall()
 
         if not res:
-            raise HTTPException(status_code=404, detail="Token number doesn't exist!")
+            raise HTTPException(status_code=404, detail="None of the token numbers is valid!")
         
-        token_id = res[0]
-        cursor.execute("SELECT assignment_id FROM trainee_assignments WHERE token_id = %s AND is_active = 1", (token_id,))
-        res = cursor.fetchone()
+        token_id_list = [row[0] for row in res]
+        cursor.execute("SELECT assignment_id FROM trainee_assignments WHERE token_id = ANY(%s) AND is_active = 1", (token_id_list,))
+        res = cursor.fetchall()
 
         if not res:
-            raise HTTPException(status_code=404, detail="Token number not assigned to anyone!")
+            raise HTTPException(status_code=404, detail="Token numbers not assigned to anyone!")
         
-        assignment_id = res[0]
-        cursor.execute(
-            "UPDATE trainee_assignments SET is_active = 0 WHERE assignment_id = %s", (assignment_id,))
+        assignment_id_list = [row[0] for row in res]
+        cursor.execute("UPDATE trainee_assignments SET is_active = 0 WHERE assignment_id = ANY(%s)", (assignment_id_list,))
+        cursor.execute("UPDATE physical_qr_tokens SET card_status = 'AVAILABLE' WHERE token_id = ANY(%s)", (token_id_list,))
 
-        cursor.execute("UPDATE physical_qr_tokens SET card_status = 'AVAILABLE' WHERE token_id = %s", (token_id,))
-
-        return {"status": "success", "message": f"Succssfully unassigned Token No. ({payload.token_number})!"}
+        return {"status": "success", "message": f"Succssfully unassigned {len(assignment_id_list)} trainees!"}
 
 @app.post("/api/destroy-token")
 def destroy_wasted_token(payload: models.DestroyTokenPayload) -> Dict[str, str]:

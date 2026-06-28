@@ -50,7 +50,7 @@ class ChangeCourseIntervalPayload(BaseModel):
     new_end_date: str
 
 class UnassignTokenPayload(TokenNumberBase):
-    pass
+    token_numbers: List[TokenNumberBase]
 
 class DestroyTokenPayload(BaseModel):
     token_number: int
