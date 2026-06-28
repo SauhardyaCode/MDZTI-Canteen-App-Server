@@ -169,6 +169,10 @@ def get_scanned_meal_data(target_date: str) -> Dict[str, int]:
             """, (target_date,)
         )
         res = cursor.fetchone()
+        print(res)
+        if not res:
+            return {}
+
         meal_stats = {
             row[0]: {
                 "veg": res[1] if (res and res[1] is not None) else 0,
