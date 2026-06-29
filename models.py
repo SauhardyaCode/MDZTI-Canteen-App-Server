@@ -18,6 +18,18 @@ class ScanItem(BaseModel):
     time: str
     meal_type: str
 
+class AddUserPayload(BaseModel):
+    role: str
+    email: str
+    username: str
+    password_hash: str
+
+class VerifyUserPayload(BaseModel):
+    role: str
+    email: Optional[str] = None
+    username: Optional[str] = None
+    password: str
+
 class SettingsPayload(BaseModel):
     settings: List[SettingsItem]
 

@@ -51,6 +51,45 @@ def configure_settings(payload: models.SettingsPayload) -> Dict[str, str]:
 
         return {"status": "success", "message": f"Settings updated successfully!"}
 
+@app.post("/api/add-user")
+def add_user(payload: models.AddUserPayload) -> Dict[str, str]:
+    with UtilityFunctions.get_connection() as cursor:
+        cursor.execute("SELECT 1 FROM user_info WHERE role = %s", (payload.role,))
+        if cursor.fetchone():
+            raise HTTPException(status_code=403, detail=f"{payload.role.title()} already exists for the app!")
+
+        cursor.execute(
+            "INSERT INTO user_info (role, email, username, password_hash) VALUES (%s, %s, %s, %s)",
+            (payload.role, payload.email, payload.username, payload.password_hash)
+        )
+
+        return {"status": "success", "role": payload.role, "email": payload.email}
+
+@app.get("/api/verify-user")
+def verify_user(payload: models.VerifyUserPayload) -> Dict[str, str]:
+    with UtilityFunctions.get_connection() as cursor:
+        if payload.email is None:
+            cursor.execute(
+                "SELECT password_hash FROM user_info WHERE username = %s AND role = %s",
+                (payload.username, payload.role)
+            )
+        else:
+            cursor.execute(
+                "SELECT password_hash FROM user_info WHERE email = %s AND role = %s",
+                (payload.email, payload.role)
+            )
+        
+        res = cursor.fetchone()
+        if not res:
+            raise HTTPException(status_code=401, detail="Email/Username not found!")
+        
+        password_hash = res[0]
+        if not hasher.check_password(payload.password, password_hash):
+            raise HTTPException(status_code=401, detail="Invalid Password!")
+        
+        return {"status": "valid", "role": payload.role}
+
+
 @app.get("/api/get-existing-token-stats")
 def get_existing_token_stats() -> Dict[str, int]:
     with UtilityFunctions.get_connection() as cursor:

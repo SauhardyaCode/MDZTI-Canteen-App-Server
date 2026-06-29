@@ -72,7 +72,7 @@ class UtilityFunctions:
             
             # keys (breakfast_time_slot, lunch_time_slot, dinner_time_slot, last_updated, last_polled, only_veg_days)
             cursor.execute('''CREATE TABLE IF NOT EXISTS settings (
-                                key TEXT UNIQUE,
+                                key TEXT PRIMARY KEY,
                                 value TEXT
                         )''')
             
@@ -86,6 +86,13 @@ class UtilityFunctions:
                                 dinner_time_slot TEXT DEFAULT NULL,
                                 is_suspended BOOLEAN DEFAULT NULL
                         )''')
+            
+            cursor.execute('''CREATE TABLE IF NOT EXISTS user_info (
+                                role TEXT PRIMARY KEY,
+                                email TEXT,
+                                username TEXT,
+                                password_hash TEXT
+                           )''')
 
     @staticmethod
     def is_time_in_slot(check_time: str, time_slot: str) -> bool:
