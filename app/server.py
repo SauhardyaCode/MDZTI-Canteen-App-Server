@@ -70,12 +70,12 @@ def verify_user(payload: models.VerifyUserPayload) -> Dict[str, str]:
     with UtilityFunctions.get_connection() as cursor:
         if payload.email is None:
             cursor.execute(
-                "SELECT password_hash FROM user_info WHERE username = %s AND role = %s",
+                "SELECT email, password_hash FROM user_info WHERE username = %s AND role = %s",
                 (payload.username, payload.role)
             )
         else:
             cursor.execute(
-                "SELECT password_hash FROM user_info WHERE email = %s AND role = %s",
+                "SELECT email, password_hash FROM user_info WHERE email = %s AND role = %s",
                 (payload.email, payload.role)
             )
         
@@ -83,11 +83,11 @@ def verify_user(payload: models.VerifyUserPayload) -> Dict[str, str]:
         if not res:
             raise HTTPException(status_code=401, detail="Email/Username not found!")
         
-        password_hash = res[0]
+        email, password_hash = res
         if not hasher.check_password(payload.password, password_hash):
             raise HTTPException(status_code=401, detail="Invalid Password!")
-        
-        return {"status": "valid", "role": payload.role, "email": payload.email}
+
+        return {"status": "valid", "role": payload.role, "email": email}
 
 
 @app.get("/api/get-existing-token-stats")
