@@ -89,6 +89,24 @@ def verify_user(payload: models.VerifyUserPayload) -> Dict[str, str]:
 
         return {"status": "valid", "role": payload.role, "email": email}
 
+@app.get("/api/verify-user-email")
+def verify_user_email(role: str, email: str):
+    with UtilityFunctions.get_connection() as cursor:
+        cursor.execute("SELECT 1 FROM user_info WHERE email = %s AND role = %s", (email, role))
+        if cursor.fetchone():
+            return {"status": "valid"}
+        else:
+            raise HTTPException(status_code=404, detail="Wrong Email ID Provided. Couldn't Verify!")
+
+@app.post("/api/change-user-password")
+def change_user_password(payload: models.ChangePasswordPayload):
+    with UtilityFunctions.get_connection() as cursor:
+        cursor.execute(
+            "UPDATE user_info SET password_hash = %s WHERE role = %s AND email = %s",
+            (payload.password_hash, payload.role, payload.email)
+        )
+        return {"status": "success"}
+        
 
 @app.get("/api/get-existing-token-stats")
 def get_existing_token_stats() -> Dict[str, int]:

@@ -30,6 +30,11 @@ class VerifyUserPayload(BaseModel):
     username: Optional[str] = None
     password: str
 
+class ChangePasswordPayload(BaseModel):
+    role: str
+    email: str
+    password_hash: str
+
 class SettingsPayload(BaseModel):
     settings: List[SettingsItem]
 
