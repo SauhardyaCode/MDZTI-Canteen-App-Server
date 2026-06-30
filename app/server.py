@@ -87,7 +87,7 @@ def verify_user(payload: models.VerifyUserPayload) -> Dict[str, str]:
         if not hasher.check_password(payload.password, password_hash):
             raise HTTPException(status_code=401, detail="Invalid Password!")
         
-        return {"status": "valid", "role": payload.role}
+        return {"status": "valid", "role": payload.role, "email": payload.email}
 
 
 @app.get("/api/get-existing-token-stats")
